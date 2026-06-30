@@ -66,7 +66,7 @@ export async function analyzeURL(url, contentResult = {}) {
   }
 
   if (apiResultsCache.has(cacheKey)) {
-    console.log('API cache hit — recalculating with content results:', cacheKey)
+    console.log('API cache hit - recalculating with content results:', cacheKey)
     const { domainResult, gsbResult, ipqsResult, vtResult, dataFetchedAt } = apiResultsCache.get(cacheKey)
     const result = calculateRiskScore(domainResult, gsbResult, ipqsResult, vtResult, contentResult, thresholds)
     result.dataFetchedAt = dataFetchedAt
@@ -115,7 +115,7 @@ async function runAnalysis(url, contentResult, cacheKey, thresholds) {
   if (preliminary.score <= 70) {
     vtResult = await checkVirusTotal(url)
   } else {
-    console.log('Skipping VT — preliminary score already dangerous:', preliminary.score)
+    console.log('Skipping VT - preliminary score already dangerous:', preliminary.score)
   }
 
   const dataFetchedAt = Date.now()

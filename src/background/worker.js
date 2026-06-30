@@ -3,7 +3,6 @@
 import { analyzeURL, clearCacheForURL, clearAllApiCache } from './urlAnalyzer.js'
 import { shouldSkipURL } from '../utils/urlUtils.js'
 
-
 const TRUSTED_REDIRECT_DOMAINS = [
   'twitter.com', 'x.com', 't.co',
   'google.com', 'youtube.com',
@@ -65,7 +64,7 @@ chrome.contextMenus.onClicked.addListener(async (info) => {
     type: 'basic',
     iconUrl: 'icons/icon48.png',
     title: `Link Check: ${result.riskLevel.label}`,
-    message: `Score ${result.score}/100 — ${result.reasons[0] || 'No specific threats detected.'}`,
+    message: `Score ${result.score}/100 - ${result.reasons[0] || 'No specific threats detected.'}`,
   })
 })
 
@@ -141,21 +140,6 @@ chrome.webNavigation.onCompleted.addListener(async (details) => {
     // Re-check enabled state — analysis may have taken seconds, user may have disabled mid-flight
     const { extensionEnabled: stillEnabled } = await chrome.storage.local.get('extensionEnabled')
     if (stillEnabled === false) return
-
-    // await chrome.storage.local.set({
-    //   [`result_${tabId}`]: {
-    //     url,
-    //     ...result,
-    //     timestamp: Date.now(),
-    //   }
-    // })
-
-    // if (result.score > 20) {
-    //   chrome.tabs.sendMessage(tabId, {
-    //     type: 'ANALYSIS_RESULT',
-    //     result,
-    //   }).catch(() => {})
-    // }
 
     if (result.riskLevel.label === 'DANGEROUS') {
 

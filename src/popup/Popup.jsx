@@ -29,14 +29,13 @@ const WHY_THIS_MATTERS = {
   gsb: "Google maintains a list of sites known to host malware or steal credentials. A match here means this exact URL was already reported by users or automated scanners.",
   ipqs: "This service analyzes domain age, hosting patterns, and known fraud signals. New or disposable domains are commonly used because attackers abandon them quickly once blocked.",
   vt: "Dozens of independent antivirus engines scanned this URL. A high number of detections means multiple security vendors, not just one, agree this is dangerous.",
-  lookalike: "Attackers register domains that look almost identical to trusted brands (like 'paypa1.com' instead of 'paypal.com') hoping you won't notice the difference.",
-  homograph: "Some letters from other alphabets look identical to Latin letters but are technically different characters, letting attackers fake a trusted domain name visually.",
+  lookalike: "Attackers register domains that look almost identical to trusted brands, like 'paypa1.com' instead of 'paypal.com', hoping you won't notice the difference.",
+  homograph: "Some letters from other alphabets look identical to Latin letters but are technically different characters. This lets attackers fake a trusted domain name visually.",
   redirect: "Legitimate sites rarely bounce through several unrelated domains. Long redirect chains are often used to hide the final phishing destination from filters.",
-  https: "Without HTTPS, any data you submit — including passwords — travels unencrypted and can be intercepted by anyone on the network.",
-  urgency: "Phishing pages often create false urgency ('act now or lose access') to make you act before thinking carefully.",
+  https: "Without HTTPS, any data you submit, including passwords, travels unencrypted and can be intercepted by anyone on the network.",
+  urgency: "Phishing pages often create false urgency, telling you to act now or lose access, to make you act before thinking carefully.",
   credentials: "A login form sending your data to a different domain than the one you're visiting is a classic sign of credential theft.",
-  headers: "Security headers like CSP and HSTS aren't phishing-specific, but their absence often correlates with quickly-deployed or poorly maintained sites — including hastily built phishing pages that skip standard hardening."
-
+  headers: "Security headers like CSP and HSTS aren't phishing-specific, but their absence often correlates with quickly built or poorly maintained sites, including phishing pages that skip standard hardening.",
 }
 
 function getWhyThisMatters(reason) {

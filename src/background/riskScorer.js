@@ -74,7 +74,7 @@ export function calculateRiskScore(domainResult, gsbResult, ipqsResult, vtResult
 
   if (missingHeaders > 0) {
     score += Math.min(missingHeaders * 5, 10)
-    reasons.push(`Missing ${missingHeaders} security header${missingHeaders > 1 ? 's' : ''} (CSP/HSTS) — common on lower-quality or hastily deployed sites`)
+    reasons.push(`Missing ${missingHeaders} security header${missingHeaders > 1 ? 's' : ''} (CSP/HSTS), common on quickly built or poorly maintained sites`)
   }
 
   if (contentResult?.hasUrgencyLanguage) {

@@ -34,14 +34,13 @@ const WHY_THIS_MATTERS = {
   gsb: "Google maintains a list of sites known to host malware or steal credentials. A match here means this exact URL was already reported by users or automated scanners.",
   ipqs: "This service analyzes domain age, hosting patterns, and known fraud signals. New or disposable domains are commonly used because attackers abandon them quickly once blocked.",
   vt: "Dozens of independent antivirus engines scanned this URL. A high number of detections means multiple security vendors, not just one, agree this is dangerous.",
-  lookalike: "Attackers register domains that look almost identical to trusted brands (like 'paypa1.com' instead of 'paypal.com') hoping you won't notice the difference.",
-  homograph: "Some letters from other alphabets look identical to Latin letters but are technically different characters, letting attackers fake a trusted domain name visually.",
+  lookalike: "Attackers register domains that look almost identical to trusted brands, like 'paypa1.com' instead of 'paypal.com', hoping you won't notice the difference.",
+  homograph: "Some letters from other alphabets look identical to Latin letters but are technically different characters. This lets attackers fake a trusted domain name visually.",
   redirect: "Legitimate sites rarely bounce through several unrelated domains. Long redirect chains are often used to hide the final phishing destination from filters.",
-  https: "Without HTTPS, any data you submit — including passwords — travels unencrypted and can be intercepted by anyone on the network.",
-  urgency: "Phishing pages often create false urgency ('act now or lose access') to make you act before thinking carefully.",
+  https: "Without HTTPS, any data you submit, including passwords, travels unencrypted and can be intercepted by anyone on the network.",
+  urgency: "Phishing pages often create false urgency, telling you to act now or lose access, to make you act before thinking carefully.",
   credentials: "A login form sending your data to a different domain than the one you're visiting is a classic sign of credential theft.",
-  headers: "Security headers like CSP and HSTS aren't phishing-specific, but their absence often correlates with quickly-deployed or poorly maintained sites — including hastily built phishing pages that skip standard hardening."
-
+  headers: "Security headers like CSP and HSTS aren't phishing-specific, but their absence often correlates with quickly built or poorly maintained sites, including phishing pages that skip standard hardening.",
 }
 
 function getWhyThisMatters(reason) {
@@ -107,6 +106,178 @@ function ReasonItem({ reason }) {
       )}
     </div>
   )
+}
+
+function generatePrintableReport(entry) {
+  const risk = getRiskFromScore(entry.score)
+  const reasonsHtml = entry.reasons?.length > 0
+    ? entry.reasons.map(r => `<li>${r}</li>`).join('')
+    : ''
+
+  const summaryLine = entry.score === 0
+    ? 'This site shows no significant risk indicators at the time of scanning.'
+    : entry.score <= 20
+    ? 'This site shows minimal risk indicators.'
+    : `This site was flagged with ${entry.reasons?.length || 0} risk indicator${entry.reasons?.length !== 1 ? 's' : ''}.`
+
+  const headersHtml = entry.securityHeaders ? `
+    <table class="headers-table">
+      <tr><td>Content-Security-Policy</td><td class="${entry.securityHeaders.hasCSP ? 'present' : 'missing'}">${entry.securityHeaders.hasCSP ? 'Present' : 'Missing'}</td></tr>
+      <tr><td>Strict-Transport-Security</td><td class="${entry.securityHeaders.hasHSTS ? 'present' : 'missing'}">${entry.securityHeaders.hasHSTS ? 'Present' : 'Missing'}</td></tr>
+      <tr><td>X-Frame-Options</td><td class="${entry.securityHeaders.hasXFrameOptions ? 'present' : 'missing'}">${entry.securityHeaders.hasXFrameOptions ? 'Present' : 'Missing'}</td></tr>
+      <tr><td>X-Content-Type-Options</td><td class="${entry.securityHeaders.hasXContentTypeOptions ? 'present' : 'missing'}">${entry.securityHeaders.hasXContentTypeOptions ? 'Present' : 'Missing'}</td></tr>
+    </table>
+  ` : ''
+
+  const cleanUrlForTitle = entry.url.replace(/^https?:\/\//, '').replace(/\/$/, '')
+  const faviconUrl = getFaviconUrl(entry.url)
+
+  const printWindow = window.open('', '_blank')
+  printWindow.document.write(`
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <title>Linkscope Report - ${cleanUrlForTitle}</title>
+      <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+          font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+          color: #0f1117;
+          padding: 48px;
+          max-width: 720px;
+          margin: 0 auto;
+        }
+        .header {
+          display: flex;
+          align-items: center;
+          gap: 12px;
+          border-bottom: 3px solid #f59e0b;
+          padding-bottom: 20px;
+          margin-bottom: 32px;
+        }
+        .logo-badge {
+          width: 36px; height: 36px;
+          background: #0f1117;
+          border-radius: 8px;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          flex-shrink: 0;
+        }
+        .header h1 { font-size: 22px; font-weight: 700; }
+        .header p { font-size: 12px; color: #57534e; margin-top: 4px; }
+        .section { margin-bottom: 28px; }
+        .section-label {
+          font-size: 11px;
+          font-weight: 600;
+          color: #78716c;
+          letter-spacing: 0.05em;
+          margin-bottom: 8px;
+          text-transform: uppercase;
+        }
+        .url-box {
+          background: #f5f5f4;
+          border-radius: 8px;
+          padding: 14px 16px;
+          font-size: 13px;
+          word-break: break-all;
+          display: flex;
+          align-items: center;
+          gap: 10px;
+        }
+        .score-row {
+          display: flex;
+          align-items: center;
+          gap: 20px;
+          margin-bottom: 8px;
+        }
+        .score-badge {
+          font-size: 36px;
+          font-weight: 700;
+          color: ${risk.color};
+        }
+        .risk-label {
+          font-size: 16px;
+          font-weight: 700;
+          color: ${risk.color};
+        }
+        .summary {
+          font-size: 13px;
+          color: #44403c;
+          margin-top: 8px;
+        }
+        ul { padding-left: 18px; }
+        li { font-size: 13px; margin-bottom: 8px; line-height: 1.5; }
+        .no-threats { font-size: 13px; color: #78716c; }
+        .headers-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+        .headers-table td { padding: 8px 0; border-bottom: 1px solid #e7e5e4; }
+        .headers-table td:last-child { text-align: right; font-weight: 600; }
+        .present { color: #059669; }
+        .missing { color: #78716c; }
+        .footer {
+          margin-top: 40px;
+          padding-top: 16px;
+          border-top: 1px solid #e7e5e4;
+          font-size: 11px;
+          color: #a8a29e;
+        }
+        @media print {
+          body { padding: 24px; }
+        }
+      </style>
+    </head>
+    <body>
+      <div class="header">
+        <div>
+          <h1>Linkscope Security Report</h1>
+          <p>Generated ${new Date().toLocaleString()}</p>
+        </div>
+      </div>
+
+      <div class="section">
+        <p class="section-label">Target URL</p>
+        <div class="url-box">
+          ${faviconUrl ? `<img src="${faviconUrl}" width="16" height="16" style="border-radius:3px;flex-shrink:0;" />` : ''}
+          <span>${entry.url}</span>
+        </div>
+      </div>
+
+      <div class="section">
+        <p class="section-label">Risk Assessment</p>
+        <div class="score-row">
+          <span class="score-badge">${entry.score}/100</span>
+          <span class="risk-label">${risk.label}</span>
+        </div>
+        <p class="summary">${summaryLine}</p>
+      </div>
+
+      <div class="section">
+        <p class="section-label">Detected Threats</p>
+        ${reasonsHtml ? `<ul>${reasonsHtml}</ul>` : '<p class="no-threats">No specific threats identified.</p>'}
+      </div>
+
+      ${entry.securityHeaders ? `
+      <div class="section">
+        <p class="section-label">Security Headers</p>
+        ${headersHtml}
+      </div>
+      ` : ''}
+
+      <div class="section">
+        <p class="section-label">Scan Metadata</p>
+        <p style="font-size: 13px;">Scanned: ${new Date(entry.timestamp).toLocaleString()}</p>
+        ${entry.dataFetchedAt && Math.abs(entry.timestamp - entry.dataFetchedAt) > 60000 ? `<p style="font-size: 12px; color: #78716c; margin-top: 4px;">Threat data last refreshed: ${new Date(entry.dataFetchedAt).toLocaleString()}</p>` : ''}
+      </div>
+
+      <div class="footer">
+        Generated by Linkscope - Real-time phishing and threat detection
+      </div>
+    </body>
+    </html>
+  `)
+  printWindow.document.close()
+  printWindow.focus()
+  setTimeout(() => printWindow.print(), 250)
 }
 
 function getRiskFromScore(score) {
@@ -324,7 +495,7 @@ function WeeklyTrendChart({ history }) {
     }}>
       <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 20 }}>
         <p style={{ fontSize: 12, color: '#94a3b8', fontWeight: 500, letterSpacing: '0.05em' }}>
-          SCANS — LAST 7 DAYS
+          SCANS - LAST 7 DAYS
         </p>
         <p style={{ fontSize: 12, color: '#f8fafc', fontWeight: 600 }}>
           {weekTotal} total
@@ -861,12 +1032,33 @@ function DetailPage({ entry, setPage }) {
 
   return (
     <div style={{ padding: 32 }}>
-      <button
-        onClick={() => setPage('history')}
-        style={{ display: 'flex', alignItems: 'center', gap: 6, background: 'none', border: 'none', color: '#94a3b8', fontSize: 13, cursor: 'pointer', marginBottom: 24, padding: 0}}
-      >
-        ← Back to History
-      </button>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 }}>
+        <button
+          onClick={() => setPage('history')}
+          style={{ display: 'flex', alignItems: 'center', gap: 6, background: 'none', border: 'none', color: '#94a3b8', fontSize: 13, cursor: 'pointer', padding: 0, flexShrink: 0 }}
+        >
+          ← Back to History
+        </button>
+        <button
+          onClick={() => generatePrintableReport(entry)}
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 6,
+            padding: '7px 14px',
+            background: '#1a1d2e',
+            border: '1px solid #2a2d3e',
+            borderRadius: 8,
+            color: '#f8fafc',
+            fontSize: 13,
+            cursor: 'pointer',
+            flexShrink: 0,
+          }}
+        >
+          <ExternalLink size={14} />
+          Download Report
+        </button>
+      </div>
 
       <div style={{
         background: '#1a1d2e',
@@ -914,7 +1106,7 @@ function DetailPage({ entry, setPage }) {
         </div>
 
         <p style={{ fontSize: 11, color: '#94a3b8' }}>
-          Scanned {getTimeAgo(entry.timestamp)} — {new Date(entry.timestamp).toLocaleString()}
+          Scanned {getTimeAgo(entry.timestamp)} - {new Date(entry.timestamp).toLocaleString()}
         </p>
         {entry.dataFetchedAt && Math.abs(entry.timestamp - entry.dataFetchedAt) > 60000 && (
           <p style={{ fontSize: 11, color: '#94a3b8', marginTop: 4 }}>
@@ -1512,7 +1704,7 @@ function OnboardingFlow({ onFinish }) {
   const steps = [
     {
       title: 'Welcome to Linkscope',
-      body: "This extension checks every site you visit against three independent threat databases and runs its own domain analysis to catch typosquatting and lookalike attacks. To get started, you'll need three free API keys — it takes about 3 minutes.",
+      body: "This extension checks every site you visit against three independent threat databases and runs its own domain analysis to catch typosquatting and lookalike attacks. To get started, you'll need three free API keys. It takes about 3 minutes.",
     },
     {
       title: 'Google Safe Browsing',
