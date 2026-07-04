@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { Shield, ShieldAlert, ShieldCheck, ShieldX, RefreshCw, ExternalLink, AlertTriangle, ChevronRight } from 'lucide-react'
+import { getCacheKey, shouldSkipURL } from '../utils/urlUtils.js'
 
 
 
@@ -274,16 +275,27 @@ export default function Popup() {
   async function loadResult() {
     setLoading(true)
     try {
-      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true })
+      let [tab] = await chrome.tabs.query({ active: true, currentWindow: true })
       if (!tab?.id) { setLoading(false); return }
 
-      if (!tab.url || tab.url.startsWith('chrome://') || tab.url === 'about:blank' || tab.url.startsWith('chrome-extension://')) {
+      // A tab that's still actively navigating can transiently report its
+      // url as about:blank before the real destination resolves - shouldSkipURL
+      // would (correctly, for a genuine about:blank page) treat that as
+      // non-scannable, but here it's just a fleeting mid-navigation state.
+      // Wait briefly and re-check once before trusting it.
+      if (tab.status === 'loading' && (!tab.url || tab.url === 'about:blank')) {
+        await new Promise(r => setTimeout(r, 400))
+        ;[tab] = await chrome.tabs.query({ active: true, currentWindow: true })
+        if (!tab?.id) { setLoading(false); return }
+      }
+
+      if (!tab.url || shouldSkipURL(tab.url)) {
         setLoading(false)
         return
       }
 
       const { whitelist = [] } = await chrome.storage.local.get('whitelist')
-      const domain = new URL(tab.url).hostname
+      const domain = getCacheKey(tab.url)
       if (whitelist.includes(domain)) {
         setWhitelisted(true)
       }
@@ -365,6 +377,8 @@ export default function Popup() {
       const [tab] = await chrome.tabs.query({ active: true, currentWindow: true })
       if (!tab?.id) return
 
+      const rescanStartedAt = Date.now()
+
       await chrome.runtime.sendMessage({
         type: 'RESCAN',
         tabId: tab.id,
@@ -372,13 +386,35 @@ export default function Popup() {
       })
 
       chrome.tabs.reload(tab.id)
-      
-      loadResult()
+
+      // Wait for a genuinely fresh result rather than calling loadResult()
+      // again here - loadResult() re-queries and re-validates tab.url,
+      // which can transiently report as about:blank mid-reload and bail
+      // out early with an incorrect "no analysis yet" state. We already
+      // know this is a valid, scannable page (we were just on it), so we
+      // only need to wait for a result timestamped after this rescan began.
+      await waitForFreshResult(tab.id, rescanStartedAt)
     } catch (err) {
       console.error('Rescan error:', err)
+      setLoading(false)
     } finally {
       setScanning(false)
     }
+  }
+
+  async function waitForFreshResult(tabId, sinceTimestamp) {
+    const maxAttempts = 30
+    for (let attempts = 0; attempts < maxAttempts; attempts++) {
+      const stored = await chrome.storage.local.get(`result_${tabId}`)
+      const data = stored[`result_${tabId}`]
+      if (data && data.timestamp >= sinceTimestamp) {
+        setResult(data)
+        setLoading(false)
+        return
+      }
+      await new Promise(r => setTimeout(r, 500))
+    }
+    setLoading(false)
   }
 
   async function handleWhitelist() {
@@ -387,7 +423,7 @@ export default function Popup() {
       if (!tab?.url) return
 
       const { whitelist = [] } = await chrome.storage.local.get('whitelist')
-      const domain = new URL(tab.url).hostname
+      const domain = getCacheKey(tab.url)
 
       if (whitelisted) {
 

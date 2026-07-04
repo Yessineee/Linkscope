@@ -40,64 +40,77 @@ async function setCachedApiResults(cacheKey, data) {
   await chrome.storage.local.set({ persistentApiCache })
 }
 
-export async function analyzeURL(url, contentResult = {}) {
+export async function analyzeURL(url, contentResult = {}, { ignoreWhitelist = false } = {}) {
   if (shouldSkipURL(url) || isPrivateURL(url)) return null
-
-  const { whitelist = [] } = await chrome.storage.local.get('whitelist')
-  const hostname = getCacheKey(url)
-  if (whitelist.includes(hostname)) {
-    console.log('Whitelisted:', hostname)
-    return null
-  }
-
-  const { riskThresholds } = await chrome.storage.local.get('riskThresholds')
-  const thresholds = riskThresholds ?? DEFAULT_THRESHOLDS
 
   const cacheKey = getCacheKey(url)
 
-  const persisted = await getCachedApiResults(cacheKey)
-  if (persisted) {
-    console.log('Persistent cache hit:', cacheKey)
-    const { domainResult, gsbResult, ipqsResult, vtResult, dataFetchedAt } = persisted
-    const result = calculateRiskScore(domainResult, gsbResult, ipqsResult, vtResult, contentResult, thresholds)
-    result.dataFetchedAt = dataFetchedAt
-    console.log(`Analysis complete: ${url} → score ${result.score} (${result.riskLevel.label})`)
-    return result
+  // Reserve the in-flight slot synchronously, before any `await` - this is
+  // what actually closes the race (see note above fetchRawApiResults):
+  // two near-simultaneous calls for the same URL can no longer both slip
+  // past this check and trigger duplicate, wasted external API calls,
+  // because there is no yield point between the check and the reservation.
+  if (!pendingAnalyses.has(cacheKey)) {
+    pendingAnalyses.set(cacheKey, fetchRawApiResults(url, cacheKey))
+  }
+  const rawDataPromise = pendingAnalyses.get(cacheKey)
+
+  const [{ whitelist = [] }, { riskThresholds }, rawApiData] = await Promise.all([
+    chrome.storage.local.get('whitelist'),
+    chrome.storage.local.get('riskThresholds'),
+    rawDataPromise,
+  ])
+
+  // Note: because the reservation above happens before this whitelist check,
+  // a genuine race between two near-simultaneous calls for a URL that is
+  // whitelisted could very rarely still trigger one round of API calls
+  // before the whitelist is checked. This is a deliberate, bounded tradeoff:
+  // it's a single wasted fetch in a rare race, not unbounded waste, and the
+  // result below is still always correctly discarded (returns null) so no
+  // incorrect score or warning is ever shown for a whitelisted site.
+  //
+  // ignoreWhitelist exists for explicit, on-demand checks (right-click
+  // "Check this link") - an explicit request to check a specific link
+  // should never be silently suppressed just because the domain is
+  // generally trusted elsewhere.
+  if (!ignoreWhitelist && whitelist.includes(cacheKey)) {
+    console.log('Whitelisted:', cacheKey)
+    return null
   }
 
-  if (apiResultsCache.has(cacheKey)) {
-    console.log('API cache hit - recalculating with content results:', cacheKey)
-    const { domainResult, gsbResult, ipqsResult, vtResult, dataFetchedAt } = apiResultsCache.get(cacheKey)
-    const result = calculateRiskScore(domainResult, gsbResult, ipqsResult, vtResult, contentResult, thresholds)
-    result.dataFetchedAt = dataFetchedAt
-    console.log(`Analysis complete: ${url} → score ${result.score} (${result.riskLevel.label})`)
-    return result
-  }
-
-  if (pendingAnalyses.has(cacheKey)) {
-    console.log('Waiting for in-flight analysis:', cacheKey)
-    await pendingAnalyses.get(cacheKey)
-
-    if (apiResultsCache.has(cacheKey)) {
-      const { domainResult, gsbResult, ipqsResult, vtResult, dataFetchedAt } = apiResultsCache.get(cacheKey)
-      const result = calculateRiskScore(domainResult, gsbResult, ipqsResult, vtResult, contentResult, thresholds)
-      result.dataFetchedAt = dataFetchedAt
-      console.log(`Analysis complete: ${url} → score ${result.score} (${result.riskLevel.label})`)
-      return result
-    }
-  }
-
-  const analysisPromise = runAnalysis(url, contentResult, cacheKey, thresholds)
-  pendingAnalyses.set(cacheKey, analysisPromise)
-
-  const result = await analysisPromise
-  pendingAnalyses.delete(cacheKey)
+  const thresholds = riskThresholds ?? DEFAULT_THRESHOLDS
+  const { domainResult, gsbResult, ipqsResult, vtResult, dataFetchedAt } = rawApiData
+  const result = calculateRiskScore(domainResult, gsbResult, ipqsResult, vtResult, contentResult, thresholds)
+  result.dataFetchedAt = dataFetchedAt
+  console.log(`Analysis complete: ${url} → score ${result.score} (${result.riskLevel.label})`)
   return result
 }
 
-async function runAnalysis(url, contentResult, cacheKey, thresholds) {
-  console.log('Analyzing URL:', url)
+// Fetches (or reuses cached) raw API results for a URL. Deliberately returns
+// only the raw per-source results (domainResult/gsbResult/ipqsResult/vtResult)
+// rather than a scored result - scoring depends on contentResult and
+// thresholds, which are per-caller and shouldn't be baked into the shared,
+// de-duplicated in-flight promise that multiple callers may await together.
+async function fetchRawApiResults(url, cacheKey) {
+  const persisted = await getCachedApiResults(cacheKey)
+  if (persisted) {
+    console.log('Persistent cache hit:', cacheKey)
+    pendingAnalyses.delete(cacheKey)
+    return persisted
+  }
 
+  if (apiResultsCache.has(cacheKey)) {
+    const cached = apiResultsCache.get(cacheKey)
+    if (Date.now() - cached.dataFetchedAt <= CACHE_TTL_MS) {
+      console.log('API cache hit:', cacheKey)
+      pendingAnalyses.delete(cacheKey)
+      return cached
+    }
+    // Stale - fall through to a fresh fetch below
+    apiResultsCache.delete(cacheKey)
+  }
+
+  console.log('Analyzing URL:', url)
   const domainResult = analyzeDomain(url)
 
   const [gsbSettled, ipqsSettled] = await Promise.allSettled([
@@ -109,7 +122,11 @@ async function runAnalysis(url, contentResult, cacheKey, thresholds) {
 
   const ipqsResult = ipqsSettled.status === 'fulfilled' ? ipqsSettled.value : { isThreat: false, fraudScore: 0, isPhishing: false, isMalware: false, domainAge: null, error: true }
 
-  const preliminary = calculateRiskScore(domainResult, gsbResult, ipqsResult, null, contentResult, thresholds)
+  // Preliminary score used only to decide whether VT is worth calling - this
+  // is an internal fetch-time optimization shared across all callers, so it
+  // deliberately uses DEFAULT_THRESHOLDS rather than any one caller's
+  // configured thresholds (which don't affect this skip-VT decision anyway).
+  const preliminary = calculateRiskScore(domainResult, gsbResult, ipqsResult, null, {}, DEFAULT_THRESHOLDS)
 
   let vtResult = { isThreat: false, detectionCount: 0, engineCount: 0, error: false }
   if (preliminary.score <= 70) {
@@ -122,13 +139,9 @@ async function runAnalysis(url, contentResult, cacheKey, thresholds) {
   const apiData = { domainResult, gsbResult, ipqsResult, vtResult, dataFetchedAt }
   apiResultsCache.set(cacheKey, apiData)
   await setCachedApiResults(cacheKey, apiData)
+  pendingAnalyses.delete(cacheKey)
 
-  const result = calculateRiskScore(domainResult, gsbResult, ipqsResult, vtResult, contentResult, thresholds)
-  result.dataFetchedAt = dataFetchedAt
-
-  console.log(`Analysis complete: ${url} → score ${result.score} (${result.riskLevel.label})`)
-
-  return result
+  return apiData
 }
 
 

@@ -22,8 +22,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.type === 'ANALYSIS_RESULT') {
     const { result } = message
 
-    if (result.score > 20) {
-      showWarning(result.score, result.reasons)
+    if (result.riskLevel?.label && result.riskLevel.label !== 'SAFE') {
+      showWarning(result.riskLevel.label, result.reasons)
     } else {
       removeWarning()
     }

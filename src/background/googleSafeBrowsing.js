@@ -18,12 +18,12 @@ export async function checkGoogleSafeBrowsing(url) {
       console.warn('GSB API key not configured')
       return { isThreat: false, threatType: null, error: true }
     }
-    const response = await fetch(`${ENDPOINT}?key=${API_KEY}`, {
+    const response = await fetch(`${ENDPOINT}?key=${encodeURIComponent(API_KEY)}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         client: {
-          clientId: 'phishing-detector',
+          clientId: 'linkscope',
           clientVersion: '1.0.0',
         },
         threatInfo: {

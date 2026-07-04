@@ -239,13 +239,19 @@ function leaveSafely() {
   }
 }
 
+function escapeHtml(str) {
+  const div = document.createElement('div')
+  div.textContent = String(str ?? '')
+  return div.innerHTML
+}
+
 function buildReasonsList(reasons) {
   if (!reasons || reasons.length === 0) {
     return '<p style="font-size:13px;color:#a8a29e;margin:0 0 24px 0">No specific indicators identified.</p>'
   }
   return `
     <ul class="pd-reasons-list">
-      ${reasons.map(r => `<li class="pd-reason-item">${r}</li>`).join('')}
+      ${reasons.map(r => `<li class="pd-reason-item">${escapeHtml(r)}</li>`).join('')}
     </ul>
   `
 }
@@ -258,7 +264,7 @@ function showLowRiskBanner(reasons) {
   container.id = 'pd-warning-container'
   container.className = 'pd-reset'
 
-  const reasonText = reasons && reasons.length > 0 ? reasons[0] : 'Minor risk indicators detected on this site.'
+  const reasonText = escapeHtml(reasons && reasons.length > 0 ? reasons[0] : 'Minor risk indicators detected on this site.')
 
   container.innerHTML = `
     <div class="pd-banner-low">
@@ -354,12 +360,12 @@ function showDangerousOverlay(reasons) {
   })
 }
 
-export function showWarning(score, reasons) {
-  if (score >= 71) {
+export function showWarning(riskLevel, reasons) {
+  if (riskLevel === 'DANGEROUS') {
     showDangerousOverlay(reasons)
-  } else if (score >= 41) {
+  } else if (riskLevel === 'SUSPICIOUS') {
     showSuspiciousOverlay(reasons)
-  } else if (score >= 21) {
+  } else if (riskLevel === 'LOW') {
     showLowRiskBanner(reasons)
   }
 }

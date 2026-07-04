@@ -2,14 +2,9 @@
 
 import { analyzeURL, clearCacheForURL, clearAllApiCache } from './urlAnalyzer.js'
 import { shouldSkipURL } from '../utils/urlUtils.js'
+import { TOP_GLOBAL_DOMAINS, KNOWN_REDIRECT_SERVICES } from './domainAnalyzer.js'
+import { extractDomainFromHostname } from '../utils/domainUtils.js'
 
-const TRUSTED_REDIRECT_DOMAINS = [
-  'twitter.com', 'x.com', 't.co',
-  'google.com', 'youtube.com',
-  'facebook.com', 'instagram.com',
-  'linkedin.com', 'microsoft.com',
-  'apple.com', 'amazon.com',
-]
 
 const redirectChains = new Map()
 const redirectResults = new Map()
@@ -33,15 +28,55 @@ async function saveToHistory(url, result) {
     },
   }
 
-  // Remove existing entry for the same URL to avoid duplicates
-  const filtered = scanHistory.filter(h => h.url !== url)
+  // Debounce a scan if it reused the exact same underlying cached data as
+  // the last logged entry for this URL - comparing dataFetchedAt directly
+  // (not elapsed wall-clock time) means: if a manual rescan or cache-clear
+  // genuinely re-fetched fresh data, it logs immediately regardless of how
+  // little time has passed; if nothing was actually re-fetched, logging
+  // again would just repeat the identical verdict with zero new information.
+  const mostRecentForUrl = scanHistory.find(h => h.url === url)
+  if (mostRecentForUrl && mostRecentForUrl.dataFetchedAt === entry.dataFetchedAt) {
+    return
+  }
 
   // Add new entry at the beginning so history is newest-first
-  const updated = [entry, ...filtered]
+  const updated = [entry, ...scanHistory]
 
   if (updated.length > 500) updated.splice(500)
 
   await chrome.storage.local.set({ scanHistory: updated })
+}
+
+// Separate store for right-click "Check this link" results. Deliberately not
+// merged into scanHistory - these are links the user vetted, often without
+// ever visiting them, and mixing the two would corrupt History's "sites you
+// actually visited" stats (Total Scans, Most Visited Domains, etc).
+async function saveLinkCheck(url, result) {
+  const { linkChecks = [] } = await chrome.storage.local.get('linkChecks')
+
+  const id = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+
+  const entry = {
+    id,
+    url,
+    score: result.score,
+    riskLevel: result.riskLevel.label,
+    timestamp: Date.now(),
+    dataFetchedAt: result.dataFetchedAt ?? Date.now(),
+    reasons: result.score > 0 ? result.reasons : [],
+    securityHeaders: {
+      hasCSP: result.hasCSP,
+      hasHSTS: result.hasHSTS,
+      hasXFrameOptions: result.hasXFrameOptions,
+      hasXContentTypeOptions: result.hasXContentTypeOptions,
+    },
+  }
+
+  const updated = [entry, ...linkChecks]
+  if (updated.length > 200) updated.splice(200)
+
+  await chrome.storage.local.set({ linkChecks: updated })
+  return id
 }
 
 chrome.contextMenus.onClicked.addListener(async (info) => {
@@ -49,23 +84,51 @@ chrome.contextMenus.onClicked.addListener(async (info) => {
   const linkUrl = info.linkUrl
   if (!linkUrl || shouldSkipURL(linkUrl)) return
 
-  const result = await analyzeURL(linkUrl)
+  // ignoreWhitelist: true - an explicit "check this link" request should
+  // never be silently suppressed just because the domain is whitelisted
+  // elsewhere; the user is deliberately asking about this specific link.
+  const result = await analyzeURL(linkUrl, {}, { ignoreWhitelist: true })
   if (!result) {
     chrome.notifications.create({
       type: 'basic',
       iconUrl: 'icons/icon48.png',
       title: 'Link Check',
-      message: 'This link could not be analyzed (private network or whitelisted).',
+      message: 'This link could not be analyzed (private network or unreachable).',
     })
     return
   }
 
-  chrome.notifications.create({
+  const id = await saveLinkCheck(linkUrl, result)
+
+  const firstReason = result.reasons[0] || 'No specific threats detected.'
+  const message = result.reasons.length > 1
+    ? `Score ${result.score}/100 - ${firstReason} (+${result.reasons.length - 1} more - click for full details)`
+    : `Score ${result.score}/100 - ${firstReason}`
+
+  chrome.notifications.create(`linkcheck-${id}`, {
     type: 'basic',
     iconUrl: 'icons/icon48.png',
     title: `Link Check: ${result.riskLevel.label}`,
-    message: `Score ${result.score}/100 - ${result.reasons[0] || 'No specific threats detected.'}`,
+    message,
   })
+})
+
+chrome.notifications.onClicked.addListener(async (notificationId) => {
+  if (!notificationId.startsWith('linkcheck-')) return
+  const id = notificationId.slice('linkcheck-'.length)
+
+  const dashboardPath = 'src/dashboard/dashboard.html'
+  const dashboardUrl = chrome.runtime.getURL(`${dashboardPath}?linkCheck=${encodeURIComponent(id)}`)
+
+  const tabs = await chrome.tabs.query({ url: chrome.runtime.getURL(`${dashboardPath}*`) })
+  if (tabs.length > 0) {
+    await chrome.tabs.update(tabs[0].id, { active: true, url: dashboardUrl })
+    await chrome.windows.update(tabs[0].windowId, { focused: true })
+  } else {
+    await chrome.tabs.create({ url: dashboardUrl })
+  }
+
+  chrome.notifications.clear(notificationId)
 })
 
 chrome.webNavigation.onBeforeNavigate.addListener((details) => {
@@ -111,12 +174,15 @@ chrome.webNavigation.onCompleted.addListener(async (details) => {
   }
 })
 
-  const getBase = u => { try { return new URL(u).hostname.split('.').slice(-2).join('.') } catch { return u } }
+  const getBase = u => { try { return extractDomainFromHostname(new URL(u).hostname) } catch { return u } }
 
   const untrustedChain = validChain.filter(u => {
   try {
     const hostname = new URL(u).hostname
-    return !TRUSTED_REDIRECT_DOMAINS.some(d => hostname.endsWith(d))
+    if(KNOWN_REDIRECT_SERVICES.has(hostname)) return false
+    const parts = hostname.split('.')
+    const baseDomain =  parts.length >= 2 ? parts[parts.length - 2] : hostname
+    return !TOP_GLOBAL_DOMAINS.has(baseDomain)
   } catch { return false }
 })
 
@@ -225,12 +291,12 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
         if (service === 'gsb') {
           const response = await fetch(
-            `https://safebrowsing.googleapis.com/v4/threatMatches:find?key=${key}`,
+            `https://safebrowsing.googleapis.com/v4/threatMatches:find?key=${encodeURIComponent(key)}`,
             {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({
-                client: { clientId: 'phishing-detector', clientVersion: '1.0.0' },
+                client: { clientId: 'linkscope', clientVersion: '1.0.0' },
                 threatInfo: {
                   threatTypes: ['MALWARE'],
                   platformTypes: ['ANY_PLATFORM'],
@@ -247,7 +313,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
         if (service === 'ipqs') {
           const response = await fetch(
-            `https://www.ipqualityscore.com/api/json/url/${key}/${encodeURIComponent(testUrl)}`
+            `https://www.ipqualityscore.com/api/json/url/${encodeURIComponent(key)}/${encodeURIComponent(testUrl)}`
           )
           const data = await response.json()
           result = data.success
@@ -280,7 +346,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     
     ((async () => {
       await clearCacheForURL(url)
-      chrome.storage.local.remove(`result_${tabId}`)
+      await chrome.storage.local.remove(`result_${tabId}`)
       sendResponse({ ok: true })
     })())
     return true
@@ -332,7 +398,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
       await saveToHistory(url, result)
 
-      if (result.score > 20) {
+      if (result.riskLevel.label !== 'SAFE') {
         chrome.tabs.sendMessage(tabId, {
           type: 'ANALYSIS_RESULT',
           result,

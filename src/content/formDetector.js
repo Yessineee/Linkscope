@@ -1,4 +1,6 @@
-const SENSITIVE_INPUT_TYPES = ['password', 'email', 'tel', 'number']
+import { extractDomainFromHostname } from '../utils/domainUtils.js'
+
+const SENSITIVE_INPUT_TYPES = ['password', 'email', 'tel']
 
 const SENSITIVE_INPUT_NAMES = [
   'password', 'pass', 'pwd',
@@ -35,8 +37,7 @@ function getFormSubmissionDomain(form, currentDomain) {
 
 function isExternalDomain(submissionDomain, currentDomain) {
   if (!submissionDomain || !currentDomain) return false
-  const getBase = domain => domain.split('.').slice(-2).join('.')
-  return getBase(submissionDomain) !== getBase(currentDomain)
+  return extractDomainFromHostname(submissionDomain) !== extractDomainFromHostname(currentDomain)
 }
 
 export function detectSuspiciousForms() {

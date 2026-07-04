@@ -1,7 +1,7 @@
 /* global chrome */
 
 import { useEffect, useState } from 'react'
-import { Shield, ShieldCheck, ShieldAlert, ShieldX, History, Settings, BarChart3, Trash2, ChevronRight, X, AlertTriangle, ExternalLink } from 'lucide-react'
+import { Shield, ShieldCheck, ShieldAlert, ShieldX, History, Settings, BarChart3, Trash2, ChevronRight, X, AlertTriangle, ExternalLink, Link2 } from 'lucide-react'
 
 const RISK_COLORS = {
   SAFE:       { color: '#10b981', label: 'Safe',       icon: ShieldCheck },
@@ -108,15 +108,24 @@ function ReasonItem({ reason }) {
   )
 }
 
+function escapeHtmlForReport(str) {
+  return String(str ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;')
+}
+
 function generatePrintableReport(entry) {
-  const risk = getRiskFromScore(entry.score)
+  const risk = RISK_COLORS[entry.riskLevel] ?? RISK_COLORS.SAFE
   const reasonsHtml = entry.reasons?.length > 0
-    ? entry.reasons.map(r => `<li>${r}</li>`).join('')
+    ? entry.reasons.map(r => `<li>${escapeHtmlForReport(r)}</li>`).join('')
     : ''
 
   const summaryLine = entry.score === 0
     ? 'This site shows no significant risk indicators at the time of scanning.'
-    : entry.score <= 20
+    : entry.riskLevel === 'SAFE' || entry.riskLevel === 'LOW'
     ? 'This site shows minimal risk indicators.'
     : `This site was flagged with ${entry.reasons?.length || 0} risk indicator${entry.reasons?.length !== 1 ? 's' : ''}.`
 
@@ -129,7 +138,7 @@ function generatePrintableReport(entry) {
     </table>
   ` : ''
 
-  const cleanUrlForTitle = entry.url.replace(/^https?:\/\//, '').replace(/\/$/, '')
+  const cleanUrlForTitle = escapeHtmlForReport(entry.url.replace(/^https?:\/\//, '').replace(/\/$/, ''))
   const faviconUrl = getFaviconUrl(entry.url)
 
   const printWindow = window.open('', '_blank')
@@ -238,7 +247,7 @@ function generatePrintableReport(entry) {
         <p class="section-label">Target URL</p>
         <div class="url-box">
           ${faviconUrl ? `<img src="${faviconUrl}" width="16" height="16" style="border-radius:3px;flex-shrink:0;" />` : ''}
-          <span>${entry.url}</span>
+          <span>${escapeHtmlForReport(entry.url)}</span>
         </div>
       </div>
 
@@ -280,18 +289,12 @@ function generatePrintableReport(entry) {
   setTimeout(() => printWindow.print(), 250)
 }
 
-function getRiskFromScore(score) {
-  if (score <= 20) return RISK_COLORS.SAFE
-  if (score <= 40) return RISK_COLORS.LOW
-  if (score <= 70) return RISK_COLORS.SUSPICIOUS
-  return RISK_COLORS.DANGEROUS
-}
-
 function Sidebar({ page, setPage, collapsed, setCollapsed }) {
   const items = [
-    { id: 'overview', label: 'Overview', icon: BarChart3 },
-    { id: 'history',  label: 'History',  icon: History   },
-    { id: 'settings', label: 'Settings', icon: Settings  },
+    { id: 'overview',    label: 'Overview',    icon: BarChart3 },
+    { id: 'history',     label: 'History',     icon: History   },
+    { id: 'linkchecks',  label: 'Link Checks', icon: Link2     },
+    { id: 'settings',    label: 'Settings',    icon: Settings  },
   ]
 
   return (
@@ -398,10 +401,10 @@ function ThreatBreakdownBar({ history }) {
   const total = history.length
   if (total === 0) return null
 
-  const safe       = history.filter(h => h.score <= 20).length
-  const low        = history.filter(h => h.score > 20 && h.score <= 40).length
-  const suspicious = history.filter(h => h.score > 40 && h.score <= 70).length
-  const dangerous  = history.filter(h => h.score > 70).length
+  const safe       = history.filter(h => h.riskLevel === 'SAFE').length
+  const low        = history.filter(h => h.riskLevel === 'LOW').length
+  const suspicious = history.filter(h => h.riskLevel === 'SUSPICIOUS').length
+  const dangerous  = history.filter(h => h.riskLevel === 'DANGEROUS').length
 
   const segments = [
     { count: safe,       color: '#10b981', label: 'Safe'       },
@@ -460,10 +463,10 @@ function ThreatBreakdownBar({ history }) {
 }
 
 
-function getSeverityRowStyle(score) {
-  if (score > 70) return { background: 'rgba(239,68,68,0.06)' }
-  if (score > 40) return { background: 'rgba(249,115,22,0.05)' }
-  if (score > 20) return { background: 'rgba(245,158,11,0.04)' }
+function getSeverityRowStyle(riskLevel) {
+  if (riskLevel === 'DANGEROUS') return { background: 'rgba(239,68,68,0.06)' }
+  if (riskLevel === 'SUSPICIOUS') return { background: 'rgba(249,115,22,0.05)' }
+  if (riskLevel === 'LOW') return { background: 'rgba(245,158,11,0.04)' }
   return { }
 }
 
@@ -532,6 +535,8 @@ function WeeklyTrendChart({ history }) {
   )
 }
 
+const SEVERITY_RANK = { SAFE: 0, LOW: 1, SUSPICIOUS: 2, DANGEROUS: 3 }
+
 function TopDomainsCard({ history }) {
   const domainStats = {}
 
@@ -539,10 +544,13 @@ function TopDomainsCard({ history }) {
     let domain
     try { domain = new URL(h.url).hostname } catch { return }
     if (!domainStats[domain]) {
-      domainStats[domain] = { domain, count: 0, maxScore: 0, url: h.url }
+      domainStats[domain] = { domain, count: 0, worstRiskLevel: 'SAFE', worstScore: 0, url: h.url }
     }
     domainStats[domain].count += 1
-    domainStats[domain].maxScore = Math.max(domainStats[domain].maxScore, h.score)
+    if ((SEVERITY_RANK[h.riskLevel] ?? 0) > SEVERITY_RANK[domainStats[domain].worstRiskLevel]) {
+      domainStats[domain].worstRiskLevel = h.riskLevel
+      domainStats[domain].worstScore = h.score
+    }
   })
 
   const topDomains = Object.values(domainStats)
@@ -564,8 +572,8 @@ function TopDomainsCard({ history }) {
         <p style={{ fontSize: 13, color: '#94a3b8' }}>No data yet.</p>
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-          {topDomains.map(({ domain, count, maxScore, url }) => {
-            const risk = getRiskFromScore(maxScore)
+          {topDomains.map(({ domain, count, worstRiskLevel, worstScore, url }) => {
+            const risk = RISK_COLORS[worstRiskLevel] ?? RISK_COLORS.SAFE
             return (
               <div key={domain} style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                 <img
@@ -587,7 +595,7 @@ function TopDomainsCard({ history }) {
                   {domain}
                 </span>
                 <span style={{ fontSize: 11, color: risk.color, fontWeight: 600 }}>
-                  {maxScore}
+                  {worstScore}
                 </span>
                 <span style={{ fontSize: 11, color: '#94a3b8', minWidth: 50, textAlign: 'right' }}>
                   {count} visit{count !== 1 ? 's' : ''}
@@ -609,7 +617,7 @@ function ProtectionSummary({ history }) {
   const thisWeek = history.filter(h => h.timestamp >= oneWeekAgo)
 
   const sitesProtected = thisWeek.length
-  const threatsBlocked = thisWeek.filter(h => h.score > 40).length
+  const threatsBlocked = thisWeek.filter(h => h.riskLevel === 'SUSPICIOUS' || h.riskLevel === 'DANGEROUS').length
   const uniqueDomains = new Set(thisWeek.map(h => {
     try { return new URL(h.url).hostname } catch { return h.url }
   })).size
@@ -661,9 +669,9 @@ function ProtectionSummary({ history }) {
 
 function OverviewPage({ history, setDetailEntry, setPage }) {
   const total = history.length
-  const threats = history.filter(h => h.score > 20).length
-  const dangerous = history.filter(h => h.score > 70).length
-  const safe = history.filter(h => h.score <= 20).length
+  const threats = history.filter(h => h.riskLevel !== 'SAFE').length
+  const dangerous = history.filter(h => h.riskLevel === 'DANGEROUS').length
+  const safe = history.filter(h => h.riskLevel === 'SAFE').length
 
   const stats = [
     { label: 'Total Scans',      value: total,     color: '#f8fafc' },
@@ -738,7 +746,7 @@ function OverviewPage({ history, setDetailEntry, setPage }) {
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
           {recent.map((entry, i) => {
-            const risk = getRiskFromScore(entry.score)
+            const risk = RISK_COLORS[entry.riskLevel] ?? RISK_COLORS.SAFE
             return (
               <button
                 key={i}
@@ -751,7 +759,7 @@ function OverviewPage({ history, setDetailEntry, setPage }) {
                   padding: '12px 16px', display: 'flex', alignItems: 'center',
                   gap: 12, width: '100%', textAlign: 'left', cursor: 'pointer',
                   transition: 'border-color 0.15s',
-                  ...getSeverityRowStyle(entry.score),
+                  ...getSeverityRowStyle(entry.riskLevel),
                 }}
                 onMouseEnter={e => e.currentTarget.style.borderColor = '#f59e0b'}
                 onMouseLeave={e => e.currentTarget.style.borderColor = '#2a2d3e'}
@@ -801,6 +809,17 @@ function OverviewPage({ history, setDetailEntry, setPage }) {
   )
 }
 
+function csvField(value) {
+  let str = String(value ?? '')
+  // Prevent CSV/formula injection: if a field starts with a character
+  // Excel/Sheets would interpret as a formula trigger, neutralize it.
+  if (/^[=+\-@\t\r]/.test(str)) {
+    str = `'${str}`
+  }
+  // Standard CSV escaping: double any embedded quote characters.
+  return `"${str.replace(/"/g, '""')}"`
+}
+
 function HistoryPage({ history, setHistory, setDetailEntry, setPage }) {
   const [filter, setFilter] = useState('ALL')
   const [search, setSearch] = useState('')
@@ -808,11 +827,8 @@ function HistoryPage({ history, setHistory, setDetailEntry, setPage }) {
   const filters = ['ALL', 'SAFE', 'LOW', 'SUSPICIOUS', 'DANGEROUS']
 
   const filtered = history .filter(h => {
-      if (filter === 'SAFE')       return h.score <= 20
-      if (filter === 'LOW')        return h.score > 20 && h.score <= 40
-      if (filter === 'SUSPICIOUS') return h.score > 40 && h.score <= 70
-      if (filter === 'DANGEROUS')  return h.score > 70
-      return true
+      if (filter === 'ALL') return true
+      return h.riskLevel === filter
     })
     .filter(h => h.url.toLowerCase().includes(search.toLowerCase()))
 
@@ -825,7 +841,13 @@ function HistoryPage({ history, setHistory, setDetailEntry, setPage }) {
     const csv = [
       'URL,Score,Risk Level,Timestamp,Reasons',
       ...history.map(h =>
-        `"${h.url}",${h.score},"${h.riskLevel}","${new Date(h.timestamp).toLocaleString()}","${h.reasons.join(' | ')}"`
+        [
+          csvField(h.url),
+          h.score,
+          csvField(h.riskLevel),
+          csvField(new Date(h.timestamp).toLocaleString()),
+          csvField(h.reasons.join(' | ')),
+        ].join(',')
       )
     ].join('\n')
 
@@ -833,7 +855,7 @@ function HistoryPage({ history, setHistory, setDetailEntry, setPage }) {
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
     a.href = url
-    a.download = `phishing-detector-history-${Date.now()}.csv`
+    a.download = `linkscope-history-${Date.now()}.csv`
     a.click()
     URL.revokeObjectURL(url)
   }
@@ -934,7 +956,7 @@ function HistoryPage({ history, setHistory, setDetailEntry, setPage }) {
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
           {filtered.map((entry, i) => {
-            const risk = getRiskFromScore(entry.score)
+            const risk = RISK_COLORS[entry.riskLevel] ?? RISK_COLORS.SAFE
             return (
               <button
                 key={i}
@@ -954,7 +976,222 @@ function HistoryPage({ history, setHistory, setDetailEntry, setPage }) {
                   textAlign: 'left',
                   width: '100%',
                   transition: 'border-color 0.15s',
-                  ...getSeverityRowStyle(entry.score),
+                  ...getSeverityRowStyle(entry.riskLevel),
+                }}
+                onMouseEnter={e => e.currentTarget.style.borderColor = '#f59e0b'}
+                onMouseLeave={e => e.currentTarget.style.borderColor = '#2a2d3e'}
+              >
+                <div style={{ position: 'relative', width: 20, height: 20, flexShrink: 0 }}>
+                  <img
+                    src={getFaviconUrl(entry.url)}
+                    alt=""
+                    width={20}
+                    height={20}
+                    style={{ borderRadius: 4 }}
+                    onError={e => { e.target.style.display = 'none' }}
+                  />
+                  <div style={{
+                    position: 'absolute',
+                    bottom: -2,
+                    right: -2,
+                    width: 8,
+                    height: 8,
+                    borderRadius: '50%',
+                    background: risk.color,
+                    border: '1.5px solid #1a1d2e',
+                  }} />
+                </div>
+                <span style={{
+                  flex: 1,
+                  fontSize: 13,
+                  color: '#f8fafc',
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                  whiteSpace: 'nowrap',
+                }}>
+                  {entry.url}
+                </span>
+                <span style={{
+                  fontSize: 12,
+                  color: risk.color,
+                  fontWeight: 600,
+                  minWidth: 24,
+                  textAlign: 'right',
+                }}>
+                  {entry.score}
+                </span>
+                <span style={{ fontSize: 11, color: '#94a3b8', minWidth: 60, textAlign: 'right' }}>
+                  {getTimeAgo(entry.timestamp)}
+                </span>
+                <ChevronRight size={14} color="#94a3b8" />
+              </button>
+            )
+          })}
+        </div>
+      )}
+    </div>
+  )
+}
+
+function LinkChecksPage({ linkChecks, setLinkChecks, setDetailEntry, setPage }) {
+  const [filter, setFilter] = useState('ALL')
+  const [search, setSearch] = useState('')
+
+  const filters = ['ALL', 'SAFE', 'LOW', 'SUSPICIOUS', 'DANGEROUS']
+
+  const filtered = linkChecks.filter(h => {
+      if (filter === 'ALL') return true
+      return h.riskLevel === filter
+    })
+    .filter(h => h.url.toLowerCase().includes(search.toLowerCase()))
+
+  async function clearLinkChecks() {
+    await chrome.storage.local.set({ linkChecks: [] })
+    setLinkChecks([])
+  }
+
+  function exportLinkChecks(linkChecks) {
+    const csv = [
+      'URL,Score,Risk Level,Timestamp,Reasons',
+      ...linkChecks.map(h =>
+        [
+          csvField(h.url),
+          h.score,
+          csvField(h.riskLevel),
+          csvField(new Date(h.timestamp).toLocaleString()),
+          csvField(h.reasons.join(' | ')),
+        ].join(',')
+      )
+    ].join('\n')
+
+    const blob = new Blob([csv], { type: 'text/csv' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `linkscope-link-checks-${Date.now()}.csv`
+    a.click()
+    URL.revokeObjectURL(url)
+  }
+
+  return (
+    <div style={{ padding: 32 }}>
+      <div style={{ display: 'flex', alignItems: 'center', marginBottom: 8 }}>
+        <div style={{ flex: 1 }}>
+          <h1 style={{ fontSize: 22, fontWeight: 700, color: '#f8fafc', marginBottom: 4 }}>
+            Link Checks
+          </h1>
+          <p style={{ fontSize: 14, color: '#94a3b8' }}>
+            {linkChecks.length} links checked via right-click - not counted as visited sites
+          </p>
+        </div>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <button
+            onClick={() => exportLinkChecks(linkChecks)}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 6,
+              padding: '8px 14px',
+              background: 'none',
+              border: '1px solid #2a2d3e',
+              borderRadius: 8,
+              color: '#94a3b8',
+              fontSize: 13,
+              cursor: 'pointer',
+            }}
+          >
+            <ExternalLink size={14} />
+            Export CSV
+          </button>
+          <button
+            onClick={clearLinkChecks}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 6,
+              padding: '8px 14px',
+              background: 'none',
+              border: '1px solid rgba(239,68,68,0.3)',
+              borderRadius: 8,
+              color: '#ef4444',
+              fontSize: 13,
+              cursor: 'pointer',
+            }}
+          >
+            <Trash2 size={14} />
+            Clear Link Checks
+          </button>
+        </div>
+      </div>
+
+      <input
+        type="text"
+        placeholder="Search by URL..."
+        value={search}
+        onChange={e => setSearch(e.target.value)}
+        style={{
+          width: '100%',
+          padding: '10px 14px',
+          background: '#1a1d2e',
+          border: '1px solid #2a2d3e',
+          borderRadius: 8,
+          color: '#f8fafc',
+          fontSize: 13,
+          marginTop: 20,
+          marginBottom: 16,
+          outline: 'none',
+        }}
+      />
+
+      <div style={{ display: 'flex', gap: 8, marginBottom: 20, marginTop: 20 }}>
+        {filters.map(f => (
+          <button
+            key={f}
+            onClick={() => setFilter(f)}
+            style={{
+              padding: '5px 12px',
+              borderRadius: 6,
+              border: '1px solid',
+              borderColor: filter === f ? '#f59e0b' : '#2a2d3e',
+              background: filter === f ? 'rgba(245,158,11,0.1)' : 'none',
+              color: filter === f ? '#f59e0b' : '#94a3b8',
+              fontSize: 12,
+              cursor: 'pointer',
+            }}
+          >
+            {f}
+          </button>
+        ))}
+      </div>
+
+      {filtered.length === 0 ? (
+        <p style={{ color: '#94a3b8', fontSize: 14 }}>
+          No links checked yet. Right-click any link and choose "Check this link for phishing" to get started.
+        </p>
+      ) : (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+          {filtered.map((entry) => {
+            const risk = RISK_COLORS[entry.riskLevel] ?? RISK_COLORS.SAFE
+            return (
+              <button
+                key={entry.id}
+                onClick={() => {
+                  setDetailEntry(entry)
+                  setPage('linkcheck-detail')
+                }}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 12,
+                  padding: '12px 16px',
+                  background: '#1a1d2e',
+                  border: '1px solid #2a2d3e',
+                  borderRadius: 10,
+                  cursor: 'pointer',
+                  textAlign: 'left',
+                  width: '100%',
+                  transition: 'border-color 0.15s',
+                  ...getSeverityRowStyle(entry.riskLevel),
                 }}
                 onMouseEnter={e => e.currentTarget.style.borderColor = '#f59e0b'}
                 onMouseLeave={e => e.currentTarget.style.borderColor = '#2a2d3e'}
@@ -1025,19 +1262,19 @@ function getReasonIcon(reason) {
 }
 
 
-function DetailPage({ entry, setPage }) {
+function DetailPage({ entry, setPage, backTo = 'history', backLabel = 'Back to History' }) {
   if (!entry) return null
-  const risk = getRiskFromScore(entry.score)
+  const risk = RISK_COLORS[entry.riskLevel] ?? RISK_COLORS.SAFE
   const RiskIcon = risk.icon
 
   return (
     <div style={{ padding: 32 }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 }}>
         <button
-          onClick={() => setPage('history')}
+          onClick={() => setPage(backTo)}
           style={{ display: 'flex', alignItems: 'center', gap: 6, background: 'none', border: 'none', color: '#94a3b8', fontSize: 13, cursor: 'pointer', padding: 0, flexShrink: 0 }}
         >
-          ← Back to History
+          ← {backLabel}
         </button>
         <button
           onClick={() => generatePrintableReport(entry)}
@@ -1161,13 +1398,20 @@ function DetailPage({ entry, setPage }) {
   )
 }
 
+function sanitizeThresholds(t) {
+  const low = Math.max(1, Math.min(Number(t.low) || 20, 97))
+  const suspicious = Math.max(low + 1, Math.min(Number(t.suspicious) || 40, 98))
+  const dangerous = Math.max(suspicious + 1, Math.min(Number(t.dangerous) || 70, 99))
+  return { low, suspicious, dangerous }
+}
+
 function ThresholdSettings() {
   const [thresholds, setThresholds] = useState({ low: 20, suspicious: 40, dangerous: 70 })
   const [saved, setSaved] = useState(false)
 
   useEffect(() => {
     chrome.storage.local.get('riskThresholds').then(({ riskThresholds }) => {
-      if (riskThresholds) setThresholds(riskThresholds)
+      if (riskThresholds) setThresholds(sanitizeThresholds(riskThresholds))
     })
   }, [])
 
@@ -1181,6 +1425,21 @@ function ThresholdSettings() {
     setThresholds({ low: 20, suspicious: 40, dangerous: 70 })
   }
 
+  function updateThreshold(key, rawValue) {
+    setThresholds(prev => {
+      const next = { ...prev }
+      if (key === 'low') {
+        // Keep at least 1 point of separation from 'suspicious', and never below the slider's own floor of 1
+        next.low = Math.max(1, Math.min(rawValue, prev.suspicious - 1))
+      } else if (key === 'suspicious') {
+        next.suspicious = Math.max(prev.low + 1, Math.min(rawValue, prev.dangerous - 1))
+      } else if (key === 'dangerous') {
+        next.dangerous = Math.min(99, Math.max(rawValue, prev.suspicious + 1))
+      }
+      return next
+    })
+  }
+
   const sliderRow = (label, key, color) => (
     <div key={key} style={{ marginBottom: 16 }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
@@ -1192,7 +1451,7 @@ function ThresholdSettings() {
         min={1}
         max={99}
         value={thresholds[key]}
-        onChange={e => setThresholds(prev => ({ ...prev, [key]: Number(e.target.value) }))}
+        onChange={e => updateThreshold(key, Number(e.target.value))}
         style={{ width: '100%', accentColor: color }}
       />
     </div>
@@ -1743,7 +2002,8 @@ function OnboardingFlow({ onFinish }) {
     setStep(step + 1)
   }
 
-  function handleSkip() {
+  async function handleSkip() {
+    await chrome.storage.local.set({ apiKeys })
     onFinish()
   }
 
@@ -1884,6 +2144,7 @@ function OnboardingFlow({ onFinish }) {
 export default function Dashboard() {
   const [page, setPage] = useState('overview')
   const [history, setHistory] = useState([])
+  const [linkChecks, setLinkChecks] = useState([])
   const [whitelist, setWhitelist] = useState([])
   const [detailEntry, setDetailEntry] = useState(null)
   const [collapsed, setCollapsed] = useState(false)
@@ -1895,15 +2156,32 @@ export default function Dashboard() {
 
 
   useEffect(() => {
-    chrome.storage.local.get(['scanHistory', 'whitelist']).then(data => {
-      setHistory(data.scanHistory ?? [])
+    chrome.storage.local.get(['scanHistory', 'linkChecks', 'whitelist']).then(data => {
+      const loadedHistory = data.scanHistory ?? []
+      const loadedLinkChecks = data.linkChecks ?? []
+      setHistory(loadedHistory)
+      setLinkChecks(loadedLinkChecks)
       setWhitelist(data.whitelist ?? [])
       setLoading(false)
+
+      // A notification click opens the dashboard with ?linkCheck=<id> - jump
+      // straight to that specific result's detail view instead of Overview.
+      const params = new URLSearchParams(window.location.search)
+      const linkCheckId = params.get('linkCheck')
+      if (linkCheckId) {
+        const match = loadedLinkChecks.find(l => l.id === linkCheckId)
+        if (match) {
+          setDetailEntry(match)
+          setPage('linkcheck-detail')
+        }
+        window.history.replaceState({}, '', window.location.pathname)
+      }
     })
 
     const interval = setInterval(() => {
-      chrome.storage.local.get(['scanHistory', 'whitelist']).then(data => {
+      chrome.storage.local.get(['scanHistory', 'linkChecks', 'whitelist']).then(data => {
         setHistory(data.scanHistory ?? [])
+        setLinkChecks(data.linkChecks ?? [])
         setWhitelist(data.whitelist ?? [])
       })
     }, 5000)
@@ -1923,7 +2201,9 @@ export default function Dashboard() {
   const pages = {
     overview: <OverviewPage history={history} setDetailEntry={setDetailEntry} setPage={setPage} />,
     history:  <HistoryPage history={history} setHistory={setHistory} setDetailEntry={setDetailEntry} setPage={setPage} />,
-    detail:   <DetailPage entry={detailEntry} setPage={setPage} />,
+    linkchecks: <LinkChecksPage linkChecks={linkChecks} setLinkChecks={setLinkChecks} setDetailEntry={setDetailEntry} setPage={setPage} />,
+    detail:   <DetailPage entry={detailEntry} setPage={setPage} backTo="history" backLabel="Back to History" />,
+    'linkcheck-detail': <DetailPage entry={detailEntry} setPage={setPage} backTo="linkchecks" backLabel="Back to Link Checks" />,
     settings: <SettingsPage whitelist={whitelist} setWhitelist={setWhitelist} />,
   }
 

@@ -44,12 +44,16 @@ export function isPrivateURL(url) {
   try {
     const hostname = extractHostname(url)
     if (!hostname) return false
+
+    const octets = hostname.split('.')
+    const isPrivate172 = octets[0] === '172' && Number(octets[1]) >= 16 && Number(octets[1]) <= 31
+
     return (
       hostname === 'localhost' ||
       hostname.startsWith('127.') ||
       hostname.startsWith('192.168.') ||
       hostname.startsWith('10.') ||
-      hostname.startsWith('172.16.') ||
+      isPrivate172 ||
       hostname.endsWith('.local')
     )
   } catch {

@@ -13,7 +13,7 @@ export async function checkIPQualityScore(url) {
     const encodedURL = encodeURIComponent(url)
 
     const response = await fetch(
-      `${ENDPOINT}/${API_KEY}/${encodedURL}?strictness=1&allow_public_access_points=true`,
+      `${ENDPOINT}/${encodeURIComponent(API_KEY)}/${encodedURL}?strictness=1&allow_public_access_points=true`,
       { method: 'GET' }
     )
 

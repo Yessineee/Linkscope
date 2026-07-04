@@ -44,17 +44,27 @@ export async function checkVirusTotal(url) {
 
     await delay(8000)
 
-    const resultResponse = await fetch(
-      `${BASE_URL}/analyses/${analysisId}`,
-      { method: 'GET', headers }
-    )
-
-    if (!resultResponse.ok) {
-      console.error('VT result error:', resultResponse.status)
+    let resultData = await fetchAnalysis(analysisId, headers)
+    if (!resultData) {
       return { isThreat: false, detectionCount: 0, engineCount: 0, error: true }
     }
 
-    const resultData = await resultResponse.json()
+    // Freshly-submitted URLs (ones VT hasn't scanned before) are often still
+    // "queued" after the first wait. One bounded retry catches the common case
+    // without risking reading incomplete stats as a false "safe" verdict.
+    if (resultData.data?.attributes?.status !== 'completed') {
+      await delay(5000)
+      resultData = await fetchAnalysis(analysisId, headers)
+      if (!resultData) {
+        return { isThreat: false, detectionCount: 0, engineCount: 0, error: true }
+      }
+    }
+
+    if (resultData.data?.attributes?.status !== 'completed') {
+      console.warn('VT: analysis still queued after retry, treating as inconclusive')
+      return { isThreat: false, detectionCount: 0, engineCount: 0, error: true }
+    }
+
     const stats = resultData.data?.attributes?.stats
 
     if (!stats) {
@@ -77,4 +87,18 @@ export async function checkVirusTotal(url) {
     console.error('VT fetch failed:', err)
     return { isThreat: false, detectionCount: 0, engineCount: 0, error: true }
   }
+}
+
+async function fetchAnalysis(analysisId, headers) {
+  const resultResponse = await fetch(
+    `${BASE_URL}/analyses/${analysisId}`,
+    { method: 'GET', headers }
+  )
+
+  if (!resultResponse.ok) {
+    console.error('VT result error:', resultResponse.status)
+    return null
+  }
+
+  return resultResponse.json()
 }

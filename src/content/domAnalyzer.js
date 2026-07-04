@@ -24,6 +24,15 @@ const URGENCY_PATTERNS = [
   'important notice',
   'security alert',
   'warning:',
+  'verify now to avoid',
+  'your payment could not be processed',
+  'update your payment information',
+  'unusual sign-in activity',
+  'we detected a login from',
+  'your subscription will be cancelled',
+  'confirm your password',
+  'click the link below to verify',
+  'your account is locked',
 ]
 
 function getPageText() {
@@ -32,12 +41,15 @@ function getPageText() {
   return body.innerText.toLowerCase()
 }
 
+
+const URGENCY_MATCH_THRESHOLD = 2
+
 function detectUrgencyLanguage(pageText) {
   const matchedPatterns = URGENCY_PATTERNS.filter(pattern =>
     pageText.includes(pattern)
   )
   return {
-    hasUrgencyLanguage: matchedPatterns.length > 0,
+    hasUrgencyLanguage: matchedPatterns.length >= URGENCY_MATCH_THRESHOLD,
     matchedPatterns,
   }
 }

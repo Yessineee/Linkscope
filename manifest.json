@@ -9,15 +9,11 @@
     "notifications",
     "webNavigation",
     "activeTab",
-    "alarms",
     "contextMenus",
     "webRequest"
   ],
   "host_permissions": [
-    "<all_urls>",
-    "https://safebrowsing.googleapis.com/*",
-    "https://www.ipqualityscore.com/*",
-    "https://www.virustotal.com/*"
+    "<all_urls>"
   ],
   "content_scripts": [
     {

@@ -1,4 +1,3 @@
-
 const MULTI_PART_TLDS = new Set([
   'co.uk', 'org.uk', 'gov.uk', 'ac.uk', 'me.uk', 'net.uk',
   'co.jp', 'co.in', 'co.kr', 'co.nz', 'co.za', 'co.il',
@@ -10,18 +9,23 @@ const MULTI_PART_TLDS = new Set([
 export function extractDomain(url) {
   try {
     const hostname = new URL(url).hostname
-    const parts = hostname.split('.')
-    
-    if (parts.length <= 2) return hostname
-    
-    const lastTwo = parts.slice(-2).join('.')
-    if (MULTI_PART_TLDS.has(lastTwo) && parts.length >= 3) {
-      return parts.slice(-3).join('.')
-    }
-    return parts.slice(-2).join('.')
+    return extractDomainFromHostname(hostname)
   } catch {
     return null
   }
+}
+
+
+export function extractDomainFromHostname(hostname) {
+  const parts = hostname.split('.')
+
+  if (parts.length <= 2) return hostname
+
+  const lastTwo = parts.slice(-2).join('.')
+  if (MULTI_PART_TLDS.has(lastTwo) && parts.length >= 3) {
+    return parts.slice(-3).join('.')
+  }
+  return parts.slice(-2).join('.')
 }
 
 
@@ -55,7 +59,7 @@ export function extractTLD(hostname) {
 
 
 export function extractSubdomain(hostname) {
-  const parts = hostname.split('.')
-  if (parts.length <= 2) return ''
-  return parts.slice(0, -2).join('.')
+  const domain = extractDomainFromHostname(hostname)
+  if (hostname === domain) return ''
+  return hostname.slice(0, hostname.length - domain.length - 1)
 }
