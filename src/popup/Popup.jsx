@@ -278,11 +278,6 @@ export default function Popup() {
       let [tab] = await chrome.tabs.query({ active: true, currentWindow: true })
       if (!tab?.id) { setLoading(false); return }
 
-      // A tab that's still actively navigating can transiently report its
-      // url as about:blank before the real destination resolves - shouldSkipURL
-      // would (correctly, for a genuine about:blank page) treat that as
-      // non-scannable, but here it's just a fleeting mid-navigation state.
-      // Wait briefly and re-check once before trusting it.
       if (tab.status === 'loading' && (!tab.url || tab.url === 'about:blank')) {
         await new Promise(r => setTimeout(r, 400))
         ;[tab] = await chrome.tabs.query({ active: true, currentWindow: true })
@@ -304,7 +299,6 @@ export default function Popup() {
       let attempts = 0
 
       const poll = async () => {
-        // Check if extension was disabled mid-poll
         const { extensionEnabled } = await chrome.storage.local.get('extensionEnabled')
         if (extensionEnabled === false) {
           setLoading(false)
@@ -360,7 +354,6 @@ export default function Popup() {
     }
 
     init()
-    // Refresh every 3 seconds in case analysis completes after popup opens
     pollInterval = setInterval(pollResult, 3000)
 
     return () => {
@@ -387,12 +380,6 @@ export default function Popup() {
 
       chrome.tabs.reload(tab.id)
 
-      // Wait for a genuinely fresh result rather than calling loadResult()
-      // again here - loadResult() re-queries and re-validates tab.url,
-      // which can transiently report as about:blank mid-reload and bail
-      // out early with an incorrect "no analysis yet" state. We already
-      // know this is a valid, scannable page (we were just on it), so we
-      // only need to wait for a result timestamped after this rescan began.
       await waitForFreshResult(tab.id, rescanStartedAt)
     } catch (err) {
       console.error('Rescan error:', err)

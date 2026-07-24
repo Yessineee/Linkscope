@@ -1,7 +1,7 @@
 /* global chrome */
 
 import { analyzeURL, clearCacheForURL, clearAllApiCache } from './urlAnalyzer.js'
-import { shouldSkipURL } from '../utils/urlUtils.js'
+import { shouldSkipURL, normalizeURL } from '../utils/urlUtils.js'
 import { TOP_GLOBAL_DOMAINS, KNOWN_REDIRECT_SERVICES } from './domainAnalyzer.js'
 import { extractDomainFromHostname } from '../utils/domainUtils.js'
 
@@ -28,13 +28,8 @@ async function saveToHistory(url, result) {
     },
   }
 
-  // Debounce a scan if it reused the exact same underlying cached data as
-  // the last logged entry for this URL - comparing dataFetchedAt directly
-  // (not elapsed wall-clock time) means: if a manual rescan or cache-clear
-  // genuinely re-fetched fresh data, it logs immediately regardless of how
-  // little time has passed; if nothing was actually re-fetched, logging
-  // again would just repeat the identical verdict with zero new information.
-  const mostRecentForUrl = scanHistory.find(h => h.url === url)
+ 
+  const mostRecentForUrl = scanHistory.find(h => normalizeURL(h.url) === normalizeURL(url))
   if (mostRecentForUrl && mostRecentForUrl.dataFetchedAt === entry.dataFetchedAt) {
     return
   }
@@ -47,10 +42,7 @@ async function saveToHistory(url, result) {
   await chrome.storage.local.set({ scanHistory: updated })
 }
 
-// Separate store for right-click "Check this link" results. Deliberately not
-// merged into scanHistory - these are links the user vetted, often without
-// ever visiting them, and mixing the two would corrupt History's "sites you
-// actually visited" stats (Total Scans, Most Visited Domains, etc).
+
 async function saveLinkCheck(url, result) {
   const { linkChecks = [] } = await chrome.storage.local.get('linkChecks')
 
@@ -84,9 +76,7 @@ chrome.contextMenus.onClicked.addListener(async (info) => {
   const linkUrl = info.linkUrl
   if (!linkUrl || shouldSkipURL(linkUrl)) return
 
-  // ignoreWhitelist: true - an explicit "check this link" request should
-  // never be silently suppressed just because the domain is whitelisted
-  // elsewhere; the user is deliberately asking about this specific link.
+  
   const result = await analyzeURL(linkUrl, {}, { ignoreWhitelist: true })
   if (!result) {
     chrome.notifications.create({
@@ -196,33 +186,7 @@ chrome.webNavigation.onCompleted.addListener(async (details) => {
     }),
   }
 
-  // Store redirect result for merging with content script findings later
   redirectResults.set(tabId, redirectResult)
-
-  try {
-    const result = await analyzeURL(url, redirectResult)
-    if (!result) return
-
-    // Re-check enabled state — analysis may have taken seconds, user may have disabled mid-flight
-    const { extensionEnabled: stillEnabled } = await chrome.storage.local.get('extensionEnabled')
-    if (stillEnabled === false) return
-
-    if (result.riskLevel.label === 'DANGEROUS') {
-
-      const { notificationsEnabled } = await chrome.storage.local.get('notificationsEnabled')
-      if (notificationsEnabled !== false) {
-        chrome.notifications.create({
-          type: 'basic',
-          iconUrl: 'icons/icon48.png',
-          title: 'Dangerous Site Detected',
-          message: result.reasons[0] || 'This site has been flagged as dangerous.',
-        })
-      }
-    }
-
-  } catch (err) {
-    console.error('Analysis failed for:', url, err)
-  }
 })
 
 

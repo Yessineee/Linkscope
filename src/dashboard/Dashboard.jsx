@@ -471,11 +471,11 @@ function getSeverityRowStyle(riskLevel) {
 }
 
 function WeeklyTrendChart({ history }) {
+  const weekStart = getWeekStart()
   const days = []
-  for (let i = 6; i >= 0; i--) {
-    const date = new Date()
-    date.setDate(date.getDate() - i)
-    date.setHours(0, 0, 0, 0)
+  for (let i = 0; i < 7; i++) {
+    const date = new Date(weekStart)
+    date.setDate(date.getDate() + i)
     days.push(date)
   }
 
@@ -609,15 +609,27 @@ function TopDomainsCard({ history }) {
   )
 }
 
+// Shared by ProtectionSummary and WeeklyTrendChart so both always agree on
+// exactly where "the last 7 days" starts - midnight local time, 6 days ago.
+// These used to be computed independently (a precise rolling 168-hour
+// window here, calendar-day buckets there), which could disagree by up to
+// ~24 hours depending on the time of day, silently dropping entries near
+// the boundary from one view but not the other.
+function getWeekStart() {
+  const date = new Date()
+  date.setDate(date.getDate() - 6)
+  date.setHours(0, 0, 0, 0)
+  return date.getTime()
+}
+
 function ProtectionSummary({ history }) {
 
-  // eslint-disable-next-line react-hooks/purity -- one-week cutoff doesn't need per-render precision
-  const oneWeekAgo = Date.now() - 7 * 24 * 60 * 60 * 1000
+  const oneWeekAgo = getWeekStart()
   
   const thisWeek = history.filter(h => h.timestamp >= oneWeekAgo)
 
   const sitesProtected = thisWeek.length
-  const threatsBlocked = thisWeek.filter(h => h.riskLevel === 'SUSPICIOUS' || h.riskLevel === 'DANGEROUS').length
+  const threatsBlocked = thisWeek.filter(h => h.riskLevel !== 'SAFE').length
   const uniqueDomains = new Set(thisWeek.map(h => {
     try { return new URL(h.url).hostname } catch { return h.url }
   })).size
@@ -2178,15 +2190,26 @@ export default function Dashboard() {
       }
     })
 
-    const interval = setInterval(() => {
+    function refreshData() {
       chrome.storage.local.get(['scanHistory', 'linkChecks', 'whitelist']).then(data => {
         setHistory(data.scanHistory ?? [])
         setLinkChecks(data.linkChecks ?? [])
         setWhitelist(data.whitelist ?? [])
       })
-    }, 5000)
+    }
 
-    return () => clearInterval(interval)
+    const interval = setInterval(refreshData, 5000)
+
+    
+    function handleVisibilityChange() {
+      if (document.visibilityState === 'visible') refreshData()
+    }
+    document.addEventListener('visibilitychange', handleVisibilityChange)
+
+    return () => {
+      clearInterval(interval)
+      document.removeEventListener('visibilitychange', handleVisibilityChange)
+    }
   }, [])
 
   function finishOnboarding() {
@@ -2198,13 +2221,16 @@ export default function Dashboard() {
     return <OnboardingFlow onFinish={finishOnboarding} />
   }
 
-  const pages = {
-    overview: <OverviewPage history={history} setDetailEntry={setDetailEntry} setPage={setPage} />,
-    history:  <HistoryPage history={history} setHistory={setHistory} setDetailEntry={setDetailEntry} setPage={setPage} />,
-    linkchecks: <LinkChecksPage linkChecks={linkChecks} setLinkChecks={setLinkChecks} setDetailEntry={setDetailEntry} setPage={setPage} />,
-    detail:   <DetailPage entry={detailEntry} setPage={setPage} backTo="history" backLabel="Back to History" />,
-    'linkcheck-detail': <DetailPage entry={detailEntry} setPage={setPage} backTo="linkchecks" backLabel="Back to Link Checks" />,
-    settings: <SettingsPage whitelist={whitelist} setWhitelist={setWhitelist} />,
+  function renderPage() {
+    switch (page) {
+      case 'overview': return <OverviewPage history={history} setDetailEntry={setDetailEntry} setPage={setPage} />
+      case 'history': return <HistoryPage history={history} setHistory={setHistory} setDetailEntry={setDetailEntry} setPage={setPage} />
+      case 'linkchecks': return <LinkChecksPage linkChecks={linkChecks} setLinkChecks={setLinkChecks} setDetailEntry={setDetailEntry} setPage={setPage} />
+      case 'detail': return <DetailPage entry={detailEntry} setPage={setPage} backTo="history" backLabel="Back to History" />
+      case 'linkcheck-detail': return <DetailPage entry={detailEntry} setPage={setPage} backTo="linkchecks" backLabel="Back to Link Checks" />
+      case 'settings': return <SettingsPage whitelist={whitelist} setWhitelist={setWhitelist} />
+      default: return null
+    }
   }
 
   return (
@@ -2216,7 +2242,7 @@ export default function Dashboard() {
     }}>
       <Sidebar page={page} setPage={setPage} collapsed={collapsed} setCollapsed={setCollapsed} />
       <div style={{ flex: 1, overflowY: 'auto' }}>
-        {loading ? <DashboardSkeleton /> : pages[page]}
+        {loading ? <DashboardSkeleton /> : renderPage()}
       </div>
     </div>
   )

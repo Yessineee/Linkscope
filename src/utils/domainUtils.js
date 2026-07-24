@@ -52,12 +52,6 @@ export function isHTTPS(url) {
 }
 
 
-export function extractTLD(hostname) {
-  const parts = hostname.split('.')
-  return parts[parts.length - 1]
-}
-
-
 export function extractSubdomain(hostname) {
   const domain = extractDomainFromHostname(hostname)
   if (hostname === domain) return ''

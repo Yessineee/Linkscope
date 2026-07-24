@@ -1,4 +1,4 @@
-import { extractDomain, extractHostname, stripWWW } from './domainUtils.js'
+import { extractHostname, stripWWW } from './domainUtils.js'
 
 
 export function normalizeURL(url) {
@@ -58,15 +58,5 @@ export function isPrivateURL(url) {
     )
   } catch {
     return false
-  }
-}
-
-
-export function getDisplayDomain(url) {
-  try {
-    const domain = extractDomain(url)
-    return domain ? stripWWW(domain) : url
-  } catch {
-    return url
   }
 }

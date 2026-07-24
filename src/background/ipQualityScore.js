@@ -35,9 +35,6 @@ export async function checkIPQualityScore(url) {
     const isThreat = isPhishing || isMalware || fraudScore > 75
     const domainAge = data.domain_age?.human ?? null
 
-
-    
-
     return {
       isThreat,
       fraudScore,
