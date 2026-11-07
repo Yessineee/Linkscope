@@ -1,7 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { analyzeDomain } from '../src/background/domainAnalyzer.js'
-import { extractDomain } from '../src/utils/domainUtils.js'
 import { isPrivateURL } from '../src/utils/urlUtils.js'
 
 // --- the six bugs ---
@@ -24,10 +23,6 @@ test('brand in a subdomain of an unrelated domain is flagged', () => {
   const r = analyzeDomain('https://paypal.evil.com/')
   assert.equal(r.isLookalike, true)
   assert.equal(r.matchedBrand, 'paypal')
-})
-
-test('multi-part public suffix is handled', () => {
-  assert.equal(extractDomain('https://bank.com.ng/'), 'bank.com.ng')
 })
 
 test('a legitimate IDN is not treated as a homograph attack', () => {

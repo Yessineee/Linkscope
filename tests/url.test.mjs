@@ -15,12 +15,6 @@ test('trailing dot is normalized away', () => {
   assert.equal(r.registrableDomain, 'paypa1.com')
 })
 
-test('multi-part public suffix is handled', () => {
-  const r = parseUrl('https://bank.com.ng/')
-  assert.equal(r.registrableDomain, 'bank.com.ng')
-  assert.equal(r.domainLabel, 'bank')
-})
-
 test('shared hosts expose the owner-chosen label', () => {
   const r = parseUrl('https://paypal.github.io/')
   assert.equal(r.registrableDomain, 'paypal.github.io')
@@ -41,4 +35,10 @@ test('private network detection is numeric and only for real IPs', () => {
   assert.equal(parseUrl('http://172.32.0.1/').isPrivateNetwork, false)
   assert.equal(parseUrl('http://[::1]/').isPrivateNetwork, true)
   assert.equal(parseUrl('http://localhost:3000/').isPrivateNetwork, true)
+})
+
+test('multi-part public suffix is handled', () => {
+  const r = parseUrl('https://bank.com.ng/')
+  assert.equal(r.registrableDomain, 'bank.com.ng')
+  assert.equal(r.domainLabel, 'bank')
 })
