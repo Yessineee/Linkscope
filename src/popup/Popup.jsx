@@ -222,7 +222,10 @@ function LoadingState() {
   )
 }
 
-function NoDataState() {
+function NoDataState({
+  title = 'No analysis yet',
+  message = 'Navigate to a website to see its risk analysis.',
+}) {
   return (
     <div className="flex flex-col items-center justify-center gap-3" style={{ minHeight: 300 }}>
       <svg width="64" height="64" viewBox="0 0 64 64" fill="none">
@@ -233,23 +236,159 @@ function NoDataState() {
         <path d="M41 44 L43 46 L47 42" stroke="#94a3b8" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
         <path d="M26 36 C26 36 28 40 32 40 C36 40 38 36 38 36" stroke="#2a2d3e" strokeWidth="2" strokeLinecap="round" />
       </svg>
-      <p style={{ color: '#f8fafc', fontSize: 14, fontWeight: 500 }}>
-        No analysis yet
+      <p style={{ color: '#f8fafc', fontSize: 14, fontWeight: 500 }}>{title}</p>
+      <p style={{ color: '#94a3b8', fontSize: 12, textAlign: 'center', padding: '0 24px' }}>{message}</p>
+    </div>
+  )
+}
+
+function DisabledState() {
+  return (
+    <div className="flex flex-col items-center justify-center gap-3" style={{ minHeight: 300 }}>
+      <Shield size={40} color="#2a2d3e" />
+      <p style={{ color: '#94a3b8', fontSize: 14, textAlign: 'center', padding: '0 24px' }}>
+        Linkscope is disabled.
       </p>
-      <p style={{ color: '#94a3b8', fontSize: 12, textAlign: 'center', padding: '0 24px' }}>
-        Navigate to a website to see its risk analysis.
+      <p style={{ color: '#57534e', fontSize: 12, textAlign: 'center', padding: '0 32px' }}>
+        Toggle the switch to re-enable protection.
       </p>
     </div>
   )
 }
 
+function WhitelistedState({ onRemove }) {
+  return (
+    <div className="flex flex-col items-center justify-center gap-3" style={{ minHeight: 300, padding: '0 24px' }}>
+      <ShieldCheck size={40} color="#10b981" />
+      <p style={{ color: '#f8fafc', fontSize: 14, fontWeight: 500 }}>Whitelisted</p>
+      <p style={{ color: '#94a3b8', fontSize: 12, textAlign: 'center' }}>
+        Linkscope doesn't scan visits to this site, and nothing about them is sent to any service.
+      </p>
+      <button
+        onClick={onRemove}
+        style={{
+          padding: '9px 16px',
+          background: '#1a1d2e',
+          border: '1px solid #2a2d3e',
+          borderRadius: 8,
+          color: '#f8fafc',
+          fontSize: 13,
+          cursor: 'pointer',
+        }}
+      >
+        Remove from whitelist
+      </button>
+    </div>
+  )
+}
+
+function ErrorState({ onRescan, scanning }) {
+  return (
+    <div className="flex flex-col items-center justify-center gap-3" style={{ minHeight: 300, padding: '0 24px' }}>
+      <AlertTriangle size={40} color="#f97316" />
+      <p style={{ color: '#f8fafc', fontSize: 14, fontWeight: 500 }}>Analysis failed</p>
+      <p style={{ color: '#94a3b8', fontSize: 12, textAlign: 'center' }}>
+        This is not a safe verdict. Linkscope couldn't finish checking this page.
+      </p>
+      <button
+        onClick={onRescan}
+        disabled={scanning}
+        style={{
+          padding: '9px 16px',
+          background: '#1a1d2e',
+          border: '1px solid #2a2d3e',
+          borderRadius: 8,
+          color: '#f8fafc',
+          fontSize: 13,
+          cursor: 'pointer',
+        }}
+      >
+        Rescan
+      </button>
+    </div>
+  )
+}
+
+function ResultView({ result, scanning, onRescan, onWhitelist }) {
+  const riskLabel = result.riskLevel?.label ?? 'SAFE'
+  const risk = RISK_COLORS[riskLabel] ?? RISK_COLORS.SAFE
+  const RiskIcon = risk.icon
+
+  const buttonStyle = {
+    flex: 1,
+    padding: '9px 0',
+    background: '#1a1d2e',
+    border: '1px solid #2a2d3e',
+    borderRadius: 8,
+    color: '#f8fafc',
+    fontSize: 13,
+    cursor: 'pointer',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+  }
+
+  return (
+    <div style={{ padding: '0 20px' }}>
+      <ScoreRing score={result.score ?? 0} color={risk.color} />
+
+      <div className="flex items-center justify-center gap-2 mb-4">
+        <RiskIcon size={18} color={risk.color} />
+        <span style={{ color: risk.color, fontSize: 16, fontWeight: 600 }}>{risk.label}</span>
+      </div>
+
+      <p style={{
+        fontSize: 11, color: '#94a3b8', textAlign: 'center', marginBottom: 16,
+        overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+      }}>
+        {result.url}
+      </p>
+
+      {result.timestamp && (
+        <p style={{ fontSize: 11, color: '#94a3b8', textAlign: 'center', marginBottom: 16 }}>
+          Scanned {getTimeAgo(result.timestamp)}
+        </p>
+      )}
+
+      {result.reasons?.length > 0 && (
+        <div style={{
+          background: '#1a1d2e', border: '1px solid #2a2d3e',
+          borderRadius: 10, padding: '12px 14px', marginBottom: 16,
+        }}>
+          <p style={{ fontSize: 11, color: '#94a3b8', marginBottom: 8, fontWeight: 500 }}>
+            DETECTED THREATS
+          </p>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+            {result.reasons.map((reason, i) => (
+              <PopupReasonItem key={i} reason={reason} />
+            ))}
+          </div>
+        </div>
+      )}
+
+      <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
+        <button onClick={onRescan} disabled={scanning} style={buttonStyle}>
+          <RefreshCw size={14} className={scanning ? 'animate-spin' : ''} />
+          Rescan
+        </button>
+        <button onClick={onWhitelist} style={buttonStyle}>
+          <ShieldCheck size={14} />
+          Whitelist
+        </button>
+      </div>
+    </div>
+  )
+}
+
 export default function Popup() {
+  const [tab, setTab] = useState(null)
+  const [status, setStatus] = useState(null)
   const [result, setResult] = useState(null)
-  const [loading, setLoading] = useState(true)
+  const [ready, setReady] = useState(false)
   const [scanning, setScanning] = useState(false)
   const [enabled, setEnabled] = useState(true)
   const [whitelisted, setWhitelisted] = useState(false)
-
 
   useEffect(() => {
     chrome.storage.local.get('extensionEnabled').then(({ extensionEnabled }) => {
@@ -257,174 +396,102 @@ export default function Popup() {
     })
   }, [])
 
+  useEffect(() => {
+    let cancelled = false
+    let storageListener = null
+    let tabListener = null
+
+    async function init() {
+      const [activeTab] = await chrome.tabs.query({ active: true, currentWindow: true })
+      if (cancelled) return
+      setTab(activeTab ?? null)
+      if (!activeTab?.id) { setReady(true); return }
+
+      const statusKey = `status_${activeTab.id}`
+      const resultKey = `result_${activeTab.id}`
+
+      // Subscribe BEFORE reading, so a change that lands in between isn't missed.
+      storageListener = (changes, area) => {
+        if (area !== 'local') return
+        if (statusKey in changes) setStatus(changes[statusKey].newValue ?? null)
+        if (resultKey in changes) setResult(changes[resultKey].newValue ?? null)
+      }
+      chrome.storage.onChanged.addListener(storageListener)
+
+      tabListener = (updatedTabId, _changeInfo, updatedTab) => {
+        if (updatedTabId === activeTab.id) setTab(updatedTab)
+      }
+      chrome.tabs.onUpdated.addListener(tabListener)
+
+      const stored = await chrome.storage.local.get([statusKey, resultKey, 'whitelist'])
+      if (cancelled) return
+      setStatus(prev => prev ?? stored[statusKey] ?? null)
+      setResult(prev => prev ?? stored[resultKey] ?? null)
+      if (activeTab.url && !shouldSkipURL(activeTab.url)) {
+        setWhitelisted((stored.whitelist ?? []).includes(getCacheKey(activeTab.url)))
+      }
+      setReady(true)
+    }
+
+    init()
+    return () => {
+      cancelled = true
+      if (storageListener) chrome.storage.onChanged.removeListener(storageListener)
+      if (tabListener) chrome.tabs.onUpdated.removeListener(tabListener)
+    }
+  }, [])
+
   async function handleToggle() {
     const newValue = !enabled
     setEnabled(newValue)
     await chrome.storage.local.set({ extensionEnabled: newValue })
 
-    if (!newValue) {
-    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true })
-    if (tab?.id) {
+    if (!newValue && tab?.id) {
       chrome.tabs.sendMessage(tab.id, { type: 'REMOVE_WARNING' }).catch(() => {})
     }
   }
-  }
-
-  
-
-  async function loadResult() {
-    setLoading(true)
-    try {
-      let [tab] = await chrome.tabs.query({ active: true, currentWindow: true })
-      if (!tab?.id) { setLoading(false); return }
-
-      if (tab.status === 'loading' && (!tab.url || tab.url === 'about:blank')) {
-        await new Promise(r => setTimeout(r, 400))
-        ;[tab] = await chrome.tabs.query({ active: true, currentWindow: true })
-        if (!tab?.id) { setLoading(false); return }
-      }
-
-      if (!tab.url || shouldSkipURL(tab.url)) {
-        setLoading(false)
-        return
-      }
-
-      const { whitelist = [] } = await chrome.storage.local.get('whitelist')
-      const domain = getCacheKey(tab.url)
-      if (whitelist.includes(domain)) {
-        setWhitelisted(true)
-      }
-
-      const maxAttempts = 30
-      let attempts = 0
-
-      const poll = async () => {
-        const { extensionEnabled } = await chrome.storage.local.get('extensionEnabled')
-        if (extensionEnabled === false) {
-          setLoading(false)
-          return
-        }
-        
-        const stored = await chrome.storage.local.get(`result_${tab.id}`)
-        const data = stored[`result_${tab.id}`]
-
-        const isRecent = data && (Date.now() - data.timestamp < 5 * 60 * 1000)
-
-        if (isRecent) {
-          setResult(data)
-          setLoading(false)
-          return
-        }
-
-        attempts++
-        if (attempts >= maxAttempts) {
-          if (data) {
-            setResult(data)
-          }
-          setLoading(false)
-          return
-        }
-
-        setTimeout(poll, 500)
-      }
-
-      poll()
-    } catch (err) {
-      console.error('Popup load error:', err)
-      setLoading(false)
-    }
-  }
-  
-  useEffect(() => {
-    let cancelled = false
-    let pollInterval = null
-
-    async function init() {
-      await loadResult()
-    }
-
-    async function pollResult() {
-      if (cancelled) return
-      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true })
-      if (!tab?.id) return
-
-      const stored = await chrome.storage.local.get(`result_${tab.id}`)
-      const data = stored[`result_${tab.id}`]
-      if (data && !cancelled) setResult(data)
-    }
-
-    init()
-    pollInterval = setInterval(pollResult, 3000)
-
-    return () => {
-      cancelled = true
-      clearInterval(pollInterval)
-    }
-  }, [])
 
   async function handleRescan() {
+    if (!tab?.id || !tab.url) return
     setScanning(true)
     setResult(null)
-    setLoading(true)
+    setStatus(null)
+    setTab(prev => ({ ...prev, status: 'loading' }))
     try {
-      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true })
-      if (!tab?.id) return
-
-      const rescanStartedAt = Date.now()
-
-      await chrome.runtime.sendMessage({
-        type: 'RESCAN',
-        tabId: tab.id,
-        url: tab.url,
-      })
-
-      chrome.tabs.reload(tab.id)
-
-      await waitForFreshResult(tab.id, rescanStartedAt)
+      await chrome.runtime.sendMessage({ type: 'RESCAN', tabId: tab.id, url: tab.url })
+      await chrome.tabs.reload(tab.id)
     } catch (err) {
       console.error('Rescan error:', err)
-      setLoading(false)
+      setStatus({ state: 'error' })
     } finally {
       setScanning(false)
     }
   }
 
-  async function waitForFreshResult(tabId, sinceTimestamp) {
-    const maxAttempts = 30
-    for (let attempts = 0; attempts < maxAttempts; attempts++) {
-      const stored = await chrome.storage.local.get(`result_${tabId}`)
-      const data = stored[`result_${tabId}`]
-      if (data && data.timestamp >= sinceTimestamp) {
-        setResult(data)
-        setLoading(false)
-        return
-      }
-      await new Promise(r => setTimeout(r, 500))
-    }
-    setLoading(false)
-  }
-
   async function handleWhitelist() {
+    if (!tab?.id || !tab.url || shouldSkipURL(tab.url)) return
     try {
-      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true })
-      if (!tab?.url) return
-
       const { whitelist = [] } = await chrome.storage.local.get('whitelist')
       const domain = getCacheKey(tab.url)
-
-      if (whitelisted) {
-
-        const updated = whitelist.filter(d => d !== domain)
-        await chrome.storage.local.set({ whitelist: updated })
-        setWhitelisted(false)
-      } else {
-        if (!whitelist.includes(domain)) {
-          await chrome.storage.local.set({ whitelist: [...whitelist, domain] })
-        }
-        setWhitelisted(true)
-        setTimeout(() => window.close(), 1000)
+      if (!whitelist.includes(domain)) {
+        await chrome.storage.local.set({ whitelist: [...whitelist, domain] })
       }
-      
+      setWhitelisted(true)
+      chrome.tabs.sendMessage(tab.id, { type: 'REMOVE_WARNING' }).catch(() => {})
+      setTimeout(() => window.close(), 1000)
+    } catch (err) {
+      console.error('Whitelist error:', err)
+    }
+  }
+
+  async function handleRemoveFromWhitelist() {
+    if (!tab?.url) return
+    try {
+      const { whitelist = [] } = await chrome.storage.local.get('whitelist')
+      const domain = getCacheKey(tab.url)
+      await chrome.storage.local.set({ whitelist: whitelist.filter(d => d !== domain) })
+      setWhitelisted(false)
+      await handleRescan()
     } catch (err) {
       console.error('Whitelist error:', err)
     }
@@ -434,144 +501,40 @@ export default function Popup() {
     chrome.tabs.create({ url: chrome.runtime.getURL('src/dashboard/dashboard.html') })
   }
 
-  if (loading) return (
-    <div style={{ background: '#0f1117', minHeight: 400 }}>
-      <Header enabled={enabled} onToggle={handleToggle} />
-      <LoadingState />
-    </div>
-  )
+  const state = status?.state
+  const notScannable = !tab?.url || shouldSkipURL(tab.url)
+  const tabLoading = tab?.status === 'loading'
 
-  if (!enabled) return (
-    <div style={{ background: '#0f1117', minHeight: 400 }}>
-      <Header enabled={enabled} onToggle={handleToggle} />
-      <div className="flex flex-col items-center justify-center gap-3" style={{ minHeight: 300 }}>
-        <Shield size={40} color="#2a2d3e" />
-        <p style={{ color: '#94a3b8', fontSize: 14, textAlign: 'center', padding: '0 24px' }}>
-          Linkscope is disabled.
-        </p>
-        <p style={{ color: '#57534e', fontSize: 12, textAlign: 'center', padding: '0 32px' }}>
-          Toggle the switch to re-enable protection.
-        </p>
-      </div>
-      <Footer openDashboard={openDashboard} />
-    </div>
-  )
+  let body
+  let showFooter = true
 
+  if (!ready) {
+    body = <LoadingState />
+    showFooter = false
+  } else if (!enabled) {
+    body = <DisabledState />
+  } else if (notScannable) {
+    body = <NoDataState title="This page isn't scanned" message="Linkscope only checks regular web pages (http and https)." />
+  } else if (whitelisted) {
+    body = <WhitelistedState onRemove={handleRemoveFromWhitelist} />
+  } else if (state === 'analyzing' || (!state && !result && tabLoading)) {
+    body = <LoadingState />
+    showFooter = false
+  } else if (state === 'error') {
+    body = <ErrorState onRescan={handleRescan} scanning={scanning} />
+  } else if (state === 'skipped') {
+    body = <NoDataState title="Not scanned" message="Private and local addresses aren't scanned." />
+  } else if (result) {
+    body = <ResultView result={result} scanning={scanning} onRescan={handleRescan} onWhitelist={handleWhitelist} />
+  } else {
+    body = <NoDataState />
+  }
 
-  if (!result) return (
-    <div style={{ background: '#0f1117', minHeight: 400 }}>
-      <Header enabled={enabled} onToggle={handleToggle} />
-      <NoDataState />
-      <Footer openDashboard={openDashboard} />
-    </div>
-  )
-
-  
-
-  const riskLabel = result.riskLevel?.label ?? 'SAFE'
-  const risk = RISK_COLORS[riskLabel] ?? RISK_COLORS.SAFE
-  const RiskIcon = risk.icon
-
-  
   return (
     <div style={{ background: '#0f1117', minHeight: 400 }}>
       <Header enabled={enabled} onToggle={handleToggle} />
-
-      <div style={{ padding: '0 20px' }}>
-        <ScoreRing score={result.score ?? 0} color={risk.color} />
-
-        <div className="flex items-center justify-center gap-2 mb-4">
-          <RiskIcon size={18} color={risk.color} />
-          <span style={{ color: risk.color, fontSize: 16, fontWeight: 600 }}>
-            {risk.label}
-          </span>
-        </div>
-
-        <p style={{
-          fontSize: 11,
-          color: '#94a3b8',
-          textAlign: 'center',
-          marginBottom: 16,
-          overflow: 'hidden',
-          textOverflow: 'ellipsis',
-          whiteSpace: 'nowrap',
-        }}>
-          {result.url}
-        </p>
-
-        {result.timestamp && (
-          <p style={{ fontSize: 11, color: '#94a3b8', textAlign: 'center', marginBottom: 16 }}>
-            Scanned {getTimeAgo(result.timestamp)}
-          </p>
-        )}
-
-        {result.reasons?.length > 0 && (
-          <div style={{
-            background: '#1a1d2e',
-            border: '1px solid #2a2d3e',
-            borderRadius: 10,
-            padding: '12px 14px',
-            marginBottom: 16,
-          }}>
-            <p style={{ fontSize: 11, color: '#94a3b8', marginBottom: 8, fontWeight: 500 }}>
-              DETECTED THREATS
-            </p>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-              {result.reasons.map((reason, i) => (
-                <PopupReasonItem key={i} reason={reason} />
-              ))}
-            </div>
-          </div>
-        )}
-
-
-        <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
-          <button
-            onClick={handleRescan}
-            disabled={scanning}
-            style={{
-              flex: 1,
-              padding: '9px 0',
-              background: '#1a1d2e',
-              border: '1px solid #2a2d3e',
-              borderRadius: 8,
-              color: '#f8fafc',
-              fontSize: 13,
-              cursor: 'pointer',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              gap: 6,
-            }}
-          >
-            <RefreshCw size={14} className={scanning ? 'animate-spin' : ''} />
-            Rescan
-          </button>
-          <button
-            onClick={handleWhitelist}
-            style={{
-              flex: 1,
-              padding: '9px 0',
-              background: whitelisted ? '#10b981' : '#1a1d2e',
-              border: `1px solid ${whitelisted ? '#10b981' : '#2a2d3e'}`,
-              borderRadius: 8,
-              color: '#f8fafc',
-              fontSize: 13,
-              cursor: 'pointer',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              gap: 6,
-              transition: 'background 0.2s, border 0.2s',
-            }}
-          >
-            <ShieldCheck size={14} />
-            {whitelisted ? 'Unwhitelist' : 'Whitelist'}
-          </button>
-        </div>
-      </div>
-
-      <Footer openDashboard={openDashboard} />
+      {body}
+      {showFooter && <Footer openDashboard={openDashboard} />}
     </div>
   )
 }

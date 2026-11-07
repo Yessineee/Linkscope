@@ -1,14 +1,29 @@
 /* global chrome */
 
 import { analyzeURL, clearCacheForURL, clearAllApiCache } from './urlAnalyzer.js'
-import { shouldSkipURL, normalizeURL } from '../utils/urlUtils.js'
+import { shouldSkipURL, normalizeURL, getCacheKey, isPrivateURL } from '../utils/urlUtils.js'
 import { TOP_GLOBAL_DOMAINS, KNOWN_REDIRECT_SERVICES } from './domainAnalyzer.js'
-import { extractDomainFromHostname } from '../utils/domainUtils.js'
+import { extractDomainFromHostname, isHTTPS } from '../utils/domainUtils.js'
 
 
 const redirectChains = new Map()
 const redirectResults = new Map()
 
+async function tabIsStillOn(tabId, url) {
+  try {
+    const tab = await chrome.tabs.get(tabId)
+    return normalizeURL(tab.url) === normalizeURL(url)
+  } catch {
+    return false
+  }
+}
+
+async function setTabStatus(tabId, url, state) {
+  if (!(await tabIsStillOn(tabId, url))) return
+  await chrome.storage.local.set({
+    [`status_${tabId}`]: { url, state, timestamp: Date.now() },
+  })
+}
 
 async function saveToHistory(url, result) {
   const { scanHistory = [] } = await chrome.storage.local.get('scanHistory')
@@ -126,6 +141,7 @@ chrome.webNavigation.onBeforeNavigate.addListener((details) => {
   const tabId = details.tabId
 
   redirectChains.set(tabId, [details.url])
+  chrome.storage.local.remove([`result_${tabId}`, `status_${tabId}`])
   
 })
 
@@ -192,7 +208,7 @@ chrome.webNavigation.onCompleted.addListener(async (details) => {
 
 
 chrome.tabs.onRemoved.addListener((tabId) => {
-  chrome.storage.local.remove(`result_${tabId}`)
+  chrome.storage.local.remove([`result_${tabId}`, `status_${tabId}`])
   redirectResults.delete(tabId)
   securityHeadersResults.delete(tabId)
 })
@@ -242,6 +258,98 @@ chrome.webRequest.onHeadersReceived.addListener(
   { urls: ['<all_urls>'] },
   ['responseHeaders']
 )
+
+async function handleContentAnalysis(message, sender) {
+  const { extensionEnabled } = await chrome.storage.local.get('extensionEnabled')
+  if (extensionEnabled === false) return
+
+  const tabId = sender.tab?.id
+  const url = sender.tab?.url
+  if (!tabId || !url || shouldSkipURL(url)) return
+
+  const redirectResult = redirectResults.get(tabId) ?? {}
+  redirectResults.delete(tabId)
+  const securityHeaders = securityHeadersResults.get(tabId) ?? {}
+  securityHeadersResults.delete(tabId)
+
+  const { whitelist = [] } = await chrome.storage.local.get('whitelist')
+  if (whitelist.includes(getCacheKey(url))) {
+    await setTabStatus(tabId, url, 'whitelisted')
+    return
+  }
+  if (isPrivateURL(url)) {
+    await setTabStatus(tabId, url, 'skipped')
+    return
+  }
+
+  await setTabStatus(tabId, url, 'analyzing')
+
+  // Anything from the page is untrusted: accept only strict booleans, and take HTTPS from the tab URL.
+  const page = message.contentResult ?? {}
+  const contentResult = {
+    hasSuspiciousForm: page.hasSuspiciousForm === true,
+    hasUrgencyLanguage: page.hasUrgencyLanguage === true,
+    isHTTPS: isHTTPS(url),
+    hasRedirectChain: redirectResult.hasRedirectChain === true,
+    redirectCount: redirectResult.redirectCount,
+    redirectChain: redirectResult.redirectChain,
+    hasCSP: securityHeaders.hasCSP,
+    hasHSTS: securityHeaders.hasHSTS,
+    hasXFrameOptions: securityHeaders.hasXFrameOptions,
+    hasXContentTypeOptions: securityHeaders.hasXContentTypeOptions,
+  }
+
+  let result
+  try {
+    result = await analyzeURL(url, contentResult)
+  } catch (err) {
+    console.error('Linkscope analysis failed:', err)
+    await setTabStatus(tabId, url, 'error')
+    return
+  }
+
+  if (!result) {
+    await setTabStatus(tabId, url, 'skipped')
+    return
+  }
+
+  result.hasCSP = contentResult.hasCSP
+  result.hasHSTS = contentResult.hasHSTS
+  result.hasXFrameOptions = contentResult.hasXFrameOptions
+  result.hasXContentTypeOptions = contentResult.hasXContentTypeOptions
+
+  const { extensionEnabled: stillEnabled } = await chrome.storage.local.get('extensionEnabled')
+  if (stillEnabled === false) {
+    await chrome.storage.local.remove(`status_${tabId}`)
+    return
+  }
+
+  await saveToHistory(url, result)
+
+  if (await tabIsStillOn(tabId, url)) {
+    await chrome.storage.local.set({
+      [`result_${tabId}`]: { url, ...result, timestamp: Date.now() },
+    })
+    await setTabStatus(tabId, url, 'done')
+    if (result.riskLevel.label !== 'SAFE') {
+      chrome.tabs.sendMessage(tabId, { type: 'ANALYSIS_RESULT', url, result }).catch(() => {})
+    }
+  }
+
+  if (result.riskLevel.label === 'DANGEROUS') {
+    const { notificationsEnabled } = await chrome.storage.local.get('notificationsEnabled')
+    if (notificationsEnabled !== false) {
+      let host = url
+      try { host = new URL(url).hostname } catch { /* keep raw url */ }
+      chrome.notifications.create({
+        type: 'basic',
+        iconUrl: 'icons/icon48.png',
+        title: 'Dangerous Site Detected',
+        message: `${host}: ${result.reasons[0] || 'This site has been flagged as dangerous.'}`,
+      })
+    }
+  }
+}
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
@@ -310,79 +418,14 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     
     ((async () => {
       await clearCacheForURL(url)
-      await chrome.storage.local.remove(`result_${tabId}`)
+      await chrome.storage.local.remove([`result_${tabId}`, `status_${tabId}`])
       sendResponse({ ok: true })
     })())
     return true
   }
 
   if (message.type === 'CONTENT_ANALYSIS') {
-    chrome.storage.local.get('extensionEnabled').then(({ extensionEnabled }) => {
-    if (extensionEnabled === false) return
-
-    const tabId = sender.tab?.id
-    const url = sender.tab?.url
-    if (!tabId || !url || shouldSkipURL(url)) return
-
-    const redirectResult = redirectResults.get(tabId) ?? {}
-    redirectResults.delete(tabId)
-
-    const securityHeaders = securityHeadersResults.get(tabId) ?? {}
-    securityHeadersResults.delete(tabId)
-
-    const mergedContentResult = {
-      ...message.contentResult,
-      hasRedirectChain: redirectResult.hasRedirectChain,
-      redirectCount: redirectResult.redirectCount,
-      redirectChain: redirectResult.redirectChain,
-      hasCSP: securityHeaders.hasCSP,
-      hasHSTS: securityHeaders.hasHSTS,
-      hasXFrameOptions: securityHeaders.hasXFrameOptions,
-      hasXContentTypeOptions: securityHeaders.hasXContentTypeOptions
-    }
-
-    analyzeURL(url, mergedContentResult).then(async result => {
-      if (!result) return
-
-      result.hasCSP = mergedContentResult.hasCSP
-      result.hasHSTS = mergedContentResult.hasHSTS
-      result.hasXFrameOptions = mergedContentResult.hasXFrameOptions
-      result.hasXContentTypeOptions = mergedContentResult.hasXContentTypeOptions
-
-      const { extensionEnabled: stillEnabled } = await chrome.storage.local.get('extensionEnabled')
-      if (stillEnabled === false) return
-
-      chrome.storage.local.set({
-        [`result_${tabId}`]: {
-          url,
-          ...result,
-          timestamp: Date.now(),
-        }
-      })
-
-      await saveToHistory(url, result)
-
-      if (result.riskLevel.label !== 'SAFE') {
-        chrome.tabs.sendMessage(tabId, {
-          type: 'ANALYSIS_RESULT',
-          result,
-        }).catch(() => {})
-      }
-
-      if (result.riskLevel.label === 'DANGEROUS') {
-        
-        const { notificationsEnabled } = await chrome.storage.local.get('notificationsEnabled')
-        if (notificationsEnabled !== false) {
-          chrome.notifications.create({
-            type: 'basic',
-            iconUrl: 'icons/icon48.png',
-            title: 'Dangerous Site Detected',
-            message: result.reasons[0] || 'This site has been flagged as dangerous.',
-          })
-        }
-      }
-    })
-  })
+    handleContentAnalysis(message, sender).catch(err => console.error('Linkscope analysis failed:', err))
     sendResponse({ received: true })
     return true
   }

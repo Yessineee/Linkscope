@@ -4,22 +4,24 @@ import { detectSuspiciousForms } from './formDetector.js'
 import { analyzePage } from './domAnalyzer.js'
 import { showWarning, removeWarning } from './warningBanner.js'
 
-function runContentAnalysis() {
-  const formResult = detectSuspiciousForms()
-  const pageResult = analyzePage()
 
-  return {
-    hasSuspiciousForm: formResult.hasSuspiciousForm,
-    suspiciousForms: formResult.suspiciousForms,
-    hasUrgencyLanguage: pageResult.hasUrgencyLanguage,
-    matchedPatterns: pageResult.matchedPatterns,
-    isHTTPS: pageResult.isHTTPS,
+
+function sameDocument(a, b) {
+  try {
+    const x = new URL(a), y = new URL(b)
+    return x.origin === y.origin && x.pathname === y.pathname
+  } catch {
+    return false
   }
 }
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   
   if (message.type === 'ANALYSIS_RESULT') {
+    if (message.url && !sameDocument(message.url, window.location.href)) {
+      sendResponse({ received: false })
+      return true
+    }
     const { result } = message
 
     if (result.riskLevel?.label && result.riskLevel.label !== 'SAFE') {
@@ -39,13 +41,28 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   return true
 })
 
-function sendContentResults() {
-  const contentResult = runContentAnalysis()
+function safely(fn, fallback) {
+  try {
+    return fn()
+  } catch (err) {
+    console.warn('Linkscope detector failed:', err)
+    return fallback
+  }
+}
 
-  chrome.runtime.sendMessage({
-    type: 'CONTENT_ANALYSIS',
-    contentResult,
-  }).catch(() => {})
+function runContentAnalysis() {
+  const formResult = safely(detectSuspiciousForms, { hasSuspiciousForm: false })
+  const pageResult = safely(analyzePage, { hasUrgencyLanguage: false })
+  return {
+    hasSuspiciousForm: formResult.hasSuspiciousForm === true,
+    hasUrgencyLanguage: pageResult.hasUrgencyLanguage === true,
+  }
+}
+
+function sendContentResults() {
+  chrome.runtime
+    .sendMessage({ type: 'CONTENT_ANALYSIS', contentResult: runContentAnalysis() })
+    .catch(() => {})
 }
 
 if (document.readyState === 'loading') {

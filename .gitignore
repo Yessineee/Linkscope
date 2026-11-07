@@ -22,3 +22,11 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Secrets and packaged builds
+.env
+.env.*
+*.pem
+*.crx
+*.zip
+coverage/

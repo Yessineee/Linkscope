@@ -11,8 +11,10 @@
   },
   "dependencies": {
     "lucide-react": "^1.18.0",
+    "punycode": "^2.3.1",
     "react": "^19.2.6",
-    "react-dom": "^19.2.6"
+    "react-dom": "^19.2.6",
+    "tldts": "^7.4.19"
   },
   "devDependencies": {
     "@crxjs/vite-plugin": "^2.6.1",

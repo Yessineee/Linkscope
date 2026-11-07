@@ -11,6 +11,10 @@ const SENSITIVE_INPUT_NAMES = [
   'account', 'login', 'username', 'user',
 ]
 
+// Page markup can shadow properties like form.action with named elements, so the native methods are called directly instead of through the form.
+const getAttr = (el, name) => Element.prototype.getAttribute.call(el, name)
+const queryAll = (root, selector) => Element.prototype.querySelectorAll.call(root, selector)
+
 function isSensitiveInput(input) {
   const type = input.type?.toLowerCase() ?? ''
   const name = input.name?.toLowerCase() ?? ''
@@ -23,13 +27,11 @@ function isSensitiveInput(input) {
 }
 
 function getFormSubmissionDomain(form, currentDomain) {
-  const action = form.action?.trim()
-  if (!action || action === '' || action === '#') {
-    return currentDomain
-  }
+  const action = (getAttr(form, 'action') ?? '').trim()
+  if (action === '' || action === '#') return currentDomain
   try {
-    const actionURL = new URL(action)
-    return actionURL.hostname
+    // Resolving against the page URL also handles relative and protocol-relative ("//host/path") actions.
+    return new URL(action, window.location.href).hostname
   } catch {
     return currentDomain
   }
@@ -42,30 +44,24 @@ function isExternalDomain(submissionDomain, currentDomain) {
 
 export function detectSuspiciousForms() {
   const currentDomain = window.location.hostname
-  const forms = document.querySelectorAll('form')
+  const forms = Document.prototype.querySelectorAll.call(document, 'form')
   let hasSuspiciousForm = false
   const suspiciousForms = []
 
   for (const form of forms) {
-    const inputs = form.querySelectorAll('input')
-    const hasSensitiveInput = Array.from(inputs).some(isSensitiveInput)
-    if (!hasSensitiveInput) continue
+    const inputs = queryAll(form, 'input')
+    if (!Array.from(inputs).some(isSensitiveInput)) continue
 
     const submissionDomain = getFormSubmissionDomain(form, currentDomain)
-    const isExternal = isExternalDomain(submissionDomain, currentDomain)
-
-    if (isExternal) {
+    if (isExternalDomain(submissionDomain, currentDomain)) {
       hasSuspiciousForm = true
       suspiciousForms.push({
-        action: form.action,
+        action: getAttr(form, 'action') ?? '',
         submissionDomain,
         currentDomain,
       })
     }
   }
 
-  return {
-    hasSuspiciousForm,
-    suspiciousForms,
-  }
+  return { hasSuspiciousForm, suspiciousForms }
 }
