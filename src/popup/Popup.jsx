@@ -315,6 +315,38 @@ function ErrorState({ onRescan, scanning }) {
   )
 }
 
+const STALLED_AFTER_MS = 60_000
+
+function PendingNote({ result }) {
+  const [, setTick] = useState(0)
+
+  useEffect(() => {
+    const id = setInterval(() => setTick(t => t + 1), 5000)
+    return () => clearInterval(id)
+  }, [])
+
+  const names = result.pending.join(', ')
+  const stalled = Date.now() - (result.timestamp ?? 0) > STALLED_AFTER_MS
+
+  if (stalled) {
+    return (
+      <p style={{ fontSize: 11, color: '#f97316', textAlign: 'center', marginBottom: 12 }}>
+        {names} didn't finish, so this result may be incomplete
+      </p>
+    )
+  }
+
+  return (
+    <p style={{
+      fontSize: 11, color: '#94a3b8', textAlign: 'center', marginBottom: 12,
+      display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
+    }}>
+      <RefreshCw size={11} className="animate-spin" />
+      Still checking {names}…
+    </p>
+  )
+}
+
 function ResultView({ result, scanning, onRescan, onWhitelist }) {
   const riskLabel = result.riskLevel?.label ?? 'SAFE'
   const risk = RISK_COLORS[riskLabel] ?? RISK_COLORS.SAFE
@@ -343,7 +375,8 @@ function ResultView({ result, scanning, onRescan, onWhitelist }) {
         <RiskIcon size={18} color={risk.color} />
         <span style={{ color: risk.color, fontSize: 16, fontWeight: 600 }}>{risk.label}</span>
       </div>
-
+      {result.pending?.length > 0 && <PendingNote result={result} />}
+      
       <p style={{
         fontSize: 11, color: '#94a3b8', textAlign: 'center', marginBottom: 16,
         overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',

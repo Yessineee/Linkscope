@@ -4,10 +4,14 @@ import { analyzeURL, clearCacheForURL, clearAllApiCache } from './urlAnalyzer.js
 import { shouldSkipURL, normalizeURL, getCacheKey, isPrivateURL } from '../utils/urlUtils.js'
 import { TOP_GLOBAL_DOMAINS, KNOWN_REDIRECT_SERVICES } from './domainAnalyzer.js'
 import { extractDomainFromHostname, isHTTPS } from '../utils/domainUtils.js'
+import { hasEscalated } from './verdict.js'
 
 
 const redirectChains = new Map()
 const redirectResults = new Map()
+
+// The most recent analysis run per tab, so a superseded run (reload, rescan) can't publish stale results.
+const latestRun = new Map()
 
 async function tabIsStillOn(tabId, url) {
   try {
@@ -94,8 +98,8 @@ chrome.contextMenus.onClicked.addListener(async (info) => {
   if (!linkUrl || shouldSkipURL(linkUrl)) return
 
   
-  const result = await analyzeURL(linkUrl, {}, { ignoreWhitelist: true })
-  if (!result) {
+  const analysis = await analyzeURL(linkUrl, {}, { ignoreWhitelist: true })
+  if (!analysis) {
     chrome.notifications.create({
       type: 'basic',
       iconUrl: 'icons/icon48.png',
@@ -104,6 +108,8 @@ chrome.contextMenus.onClicked.addListener(async (info) => {
     })
     return
   }
+
+  const result = analysis.final ? await analysis.final : analysis.result
 
   const id = await saveLinkCheck(linkUrl, result)
 
@@ -261,13 +267,52 @@ chrome.webRequest.onHeadersReceived.addListener(
   ['responseHeaders']
 )
 
-async function handleContentAnalysis(message, sender) {
+async function isEnabled() {
   const { extensionEnabled } = await chrome.storage.local.get('extensionEnabled')
-  if (extensionEnabled === false) return
+  return extensionEnabled !== false
+}
+
+function attachHeaders(result, content) {
+  result.hasCSP = content.hasCSP
+  result.hasHSTS = content.hasHSTS
+  result.hasXFrameOptions = content.hasXFrameOptions
+  result.hasXContentTypeOptions = content.hasXContentTypeOptions
+}
+
+async function publishToTab(tabId, url, result, showWarning) {
+  if (!(await tabIsStillOn(tabId, url))) return
+  await chrome.storage.local.set({
+    [`result_${tabId}`]: { url, ...result, timestamp: Date.now() },
+  })
+  await setTabStatus(tabId, url, 'done')
+  if (showWarning && result.riskLevel.label !== 'SAFE') {
+    chrome.tabs.sendMessage(tabId, { type: 'ANALYSIS_RESULT', url, result }).catch(() => {})
+  }
+}
+
+async function notifyDangerous(url, result) {
+  const { notificationsEnabled } = await chrome.storage.local.get('notificationsEnabled')
+  if (notificationsEnabled === false) return
+  let host = url
+  try { host = new URL(url).hostname } catch { /* keep raw url */ }
+  chrome.notifications.create({
+    type: 'basic',
+    iconUrl: 'icons/icon48.png',
+    title: 'Dangerous Site Detected',
+    message: `${host}: ${result.reasons[0] || 'This site has been flagged as dangerous.'}`,
+  })
+}
+
+async function handleContentAnalysis(message, sender) {
+  if (!(await isEnabled())) return
 
   const tabId = sender.tab?.id
   const url = sender.tab?.url
   if (!tabId || !url || shouldSkipURL(url)) return
+
+  const run = Symbol('analysis')
+  latestRun.set(tabId, run)
+  const superseded = () => latestRun.get(tabId) !== run
 
   const redirectResult = redirectResults.get(tabId) ?? {}
   redirectResults.delete(tabId)
@@ -301,55 +346,57 @@ async function handleContentAnalysis(message, sender) {
     hasXContentTypeOptions: securityHeaders.hasXContentTypeOptions,
   }
 
-  let result
+  let analysis
   try {
-    result = await analyzeURL(url, contentResult)
+    analysis = await analyzeURL(url, contentResult)
   } catch (err) {
     console.error('Linkscope analysis failed:', err)
     await setTabStatus(tabId, url, 'error')
     return
   }
 
-  if (!result) {
+  if (!analysis) {
     await setTabStatus(tabId, url, 'skipped')
     return
   }
 
-  result.hasCSP = contentResult.hasCSP
-  result.hasHSTS = contentResult.hasHSTS
-  result.hasXFrameOptions = contentResult.hasXFrameOptions
-  result.hasXContentTypeOptions = contentResult.hasXContentTypeOptions
+  const { result, final } = analysis
+  attachHeaders(result, contentResult)
 
-  const { extensionEnabled: stillEnabled } = await chrome.storage.local.get('extensionEnabled')
-  if (stillEnabled === false) {
-    await chrome.storage.local.remove(`status_${tabId}`)
+  if (!(await isEnabled())) {
+    await chrome.storage.local.remove([`result_${tabId}`, `status_${tabId}`])
     return
   }
 
-  await saveToHistory(url, result)
-
-  if (await tabIsStillOn(tabId, url)) {
-    await chrome.storage.local.set({
-      [`result_${tabId}`]: { url, ...result, timestamp: Date.now() },
-    })
-    await setTabStatus(tabId, url, 'done')
-    if (result.riskLevel.label !== 'SAFE') {
-      chrome.tabs.sendMessage(tabId, { type: 'ANALYSIS_RESULT', url, result }).catch(() => {})
-    }
+  // Phase 1: warn as soon as the fast sources have spoken.
+  if (!superseded()) {
+    await publishToTab(tabId, url, result, true)
+    if (result.riskLevel.label === 'DANGEROUS') await notifyDangerous(url, result)
   }
 
-  if (result.riskLevel.label === 'DANGEROUS') {
-    const { notificationsEnabled } = await chrome.storage.local.get('notificationsEnabled')
-    if (notificationsEnabled !== false) {
-      let host = url
-      try { host = new URL(url).hostname } catch { /* keep raw url */ }
-      chrome.notifications.create({
-        type: 'basic',
-        iconUrl: 'icons/icon48.png',
-        title: 'Dangerous Site Detected',
-        message: `${host}: ${result.reasons[0] || 'This site has been flagged as dangerous.'}`,
-      })
-    }
+  if (!final) {
+    await saveToHistory(url, result)
+    return
+  }
+
+  // Phase 2: VirusTotal finished. History is written once, at the final verdict.
+  const finalResult = await final
+  attachHeaders(finalResult, contentResult)
+
+  if (!(await isEnabled())) {
+    await chrome.storage.local.remove([`result_${tabId}`, `status_${tabId}`])
+    return
+  }
+
+  await saveToHistory(url, finalResult)
+
+  if (superseded()) return
+
+  const escalated = hasEscalated(result.riskLevel.label, finalResult.riskLevel.label)
+  await publishToTab(tabId, url, finalResult, escalated)
+
+  if (result.riskLevel.label !== 'DANGEROUS' && finalResult.riskLevel.label === 'DANGEROUS') {
+    await notifyDangerous(url, finalResult)
   }
 }
 
