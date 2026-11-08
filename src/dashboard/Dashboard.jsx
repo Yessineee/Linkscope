@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { Shield, ShieldCheck, ShieldAlert, ShieldX, History, Settings, BarChart3, Trash2, ChevronRight, X, AlertTriangle, ExternalLink, Link2 } from 'lucide-react'
+import { SIGNAL_INFO } from '../core/signalInfo.js'
 
 const RISK_COLORS = {
   SAFE:       { color: '#10b981', label: 'Safe',       icon: ShieldCheck },
@@ -9,6 +10,8 @@ const RISK_COLORS = {
   SUSPICIOUS: { color: '#f97316', label: 'Suspicious', icon: ShieldAlert },
   DANGEROUS:  { color: '#ef4444', label: 'Dangerous',  icon: ShieldX },
 }
+
+const ICON_COMPONENTS = { shield: Shield, alertTriangle: AlertTriangle, shieldAlert: ShieldAlert, shieldX: ShieldX }
 
 function getFaviconUrl(url) {
   try {
@@ -57,10 +60,13 @@ function getWhyThisMatters(reason) {
   return null
 }
 
-function ReasonItem({ reason }) {
+function ReasonItem({ reason, signal }) {
   const [expanded, setExpanded] = useState(false)
-  const { icon: ReasonIcon, color } = getReasonIcon(reason)
-  const explanation = getWhyThisMatters(reason)
+  const info = signal ? SIGNAL_INFO[signal.id] : null
+  const legacy = getReasonIcon(reason)
+  const ReasonIcon = info ? ICON_COMPONENTS[info.icon] : legacy.icon
+  const color = info ? info.color : legacy.color
+  const explanation = info ? info.why : getWhyThisMatters(reason)
 
   return (
     <div style={{ marginBottom: 4 }}>
@@ -1377,9 +1383,8 @@ function DetailPage({ entry, setPage, backTo = 'history', backLabel = 'Back to H
           </p>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
             {entry.reasons.map((reason, i) => (
-              <ReasonItem key={i} reason={reason} />
+              <ReasonItem key={i} reason={reason} signal={entry.signals?.[i]} />
             ))}
-            
           </div>
         </div>
       )}

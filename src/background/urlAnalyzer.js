@@ -4,7 +4,7 @@ import { analyzeDomain } from './domainAnalyzer.js'
 import { checkGoogleSafeBrowsing } from './googleSafeBrowsing.js'
 import { checkIPQualityScore } from './ipQualityScore.js'
 import { checkVirusTotal } from './virusTotal.js'
-import { calculateRiskScore, DEFAULT_THRESHOLDS } from './riskScorer.js'
+import { calculateRiskScore, describeSignal, DEFAULT_THRESHOLDS } from './riskScorer.js'
 import { getCacheKey, shouldSkipURL, isPrivateURL } from '../utils/urlUtils.js'
 
 import { parseUrl } from '../core/url.js'
@@ -95,9 +95,9 @@ export async function analyzeURL(url, contentResult = {}, { ignoreWhitelist = fa
   result.failedSources = failedSources
 
   if (result.incomplete) {
-    result.reasons.push(
-      `Could not check ${failedSources.join(', ')}, so this result may be incomplete`
-    )
+    const signal = { id: 'incomplete', points: 0, evidence: { failedSources } }
+    result.signals.push(signal)
+    result.reasons.push(describeSignal(signal))
   }
 
   console.log(`Analysis complete: ${url} → score ${result.score} (${result.riskLevel.label})`)

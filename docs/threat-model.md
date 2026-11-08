@@ -56,7 +56,7 @@ Concern: browsing data reaching parties the user didn't intend.
 | Whitelisted sites were still sent to the APIs | Fixed |
 | "Clear History" leaves the API cache and link checks in place | Open |
 | API keys in extension storage are readable from content scripts | Open |
-| The dashboard page can be framed by any website | Open (next fix) |
+| The dashboard page can be framed by any website | Fixed |
 
 ## Out of scope
 

@@ -34,7 +34,8 @@ async function saveToHistory(url, result) {
     riskLevel: result.riskLevel.label,
     timestamp: Date.now(),
     dataFetchedAt: result.dataFetchedAt ?? Date.now(),
-    reasons: result.score > 0 ? result.reasons : [],
+    reasons: result.reasons,
+    signals: result.signals,
     securityHeaders: {
       hasCSP: result.hasCSP,
       hasHSTS: result.hasHSTS,
@@ -70,7 +71,8 @@ async function saveLinkCheck(url, result) {
     riskLevel: result.riskLevel.label,
     timestamp: Date.now(),
     dataFetchedAt: result.dataFetchedAt ?? Date.now(),
-    reasons: result.score > 0 ? result.reasons : [],
+    reasons: result.reasons,
+    signals: result.signals,
     securityHeaders: {
       hasCSP: result.hasCSP,
       hasHSTS: result.hasHSTS,

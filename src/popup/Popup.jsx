@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react'
 import { Shield, ShieldAlert, ShieldCheck, ShieldX, RefreshCw, ExternalLink, AlertTriangle, ChevronRight } from 'lucide-react'
 import { getCacheKey, shouldSkipURL } from '../utils/urlUtils.js'
+import { SIGNAL_INFO } from '../core/signalInfo.js'
 
 
 
@@ -12,6 +13,8 @@ const RISK_COLORS = {
   SUSPICIOUS: { color: '#f97316', label: 'Suspicious', icon: ShieldAlert },
   DANGEROUS:  { color: '#ef4444', label: 'Dangerous',  icon: ShieldX },
 }
+
+const ICON_COMPONENTS = { shield: Shield, alertTriangle: AlertTriangle, shieldAlert: ShieldAlert, shieldX: ShieldX }
 
 function getReasonIcon(reason) {
   if (reason.includes('Google Safe Browsing')) return { icon: Shield, color: '#4285f4' }
@@ -53,10 +56,13 @@ function getWhyThisMatters(reason) {
   return null
 }
 
-function PopupReasonItem({ reason }) {
+function PopupReasonItem({ reason, signal }) {
   const [expanded, setExpanded] = useState(false)
-  const { icon: ReasonIcon, color } = getReasonIcon(reason)
-  const explanation = getWhyThisMatters(reason)
+  const info = signal ? SIGNAL_INFO[signal.id] : null
+  const legacy = getReasonIcon(reason)
+  const ReasonIcon = info ? ICON_COMPONENTS[info.icon] : legacy.icon
+  const color = info ? info.color : legacy.color
+  const explanation = info ? info.why : getWhyThisMatters(reason)
 
   return (
     <div>
@@ -361,7 +367,7 @@ function ResultView({ result, scanning, onRescan, onWhitelist }) {
           </p>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
             {result.reasons.map((reason, i) => (
-              <PopupReasonItem key={i} reason={reason} />
+              <PopupReasonItem key={i} reason={reason} signal={result.signals?.[i]} />
             ))}
           </div>
         </div>
