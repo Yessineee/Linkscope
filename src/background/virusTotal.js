@@ -2,6 +2,8 @@
 
 const BASE_URL = 'https://www.virustotal.com/api/v3'
 
+const REQUEST_TIMEOUT_MS = 15_000
+
 const DETECTION_THRESHOLD = 5
 
 
@@ -43,7 +45,7 @@ function scoreFromStats(stats) {
 
 async function fetchExistingReport(urlId, headers) {
   try {
-    const response = await fetch(`${BASE_URL}/urls/${urlId}`, { method: 'GET', headers })
+    const response = await fetch(`${BASE_URL}/urls/${urlId}`, { method: 'GET', headers, signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS) })
 
     if (response.status === 429) return { rateLimited: true }
     if (!response.ok) return { stats: null }
@@ -89,6 +91,7 @@ export async function checkVirusTotal(url) {
       method: 'POST',
       headers,
       body: formData,
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     })
 
     if (submitResponse.status === 429) return rateLimited()
@@ -140,7 +143,7 @@ export async function checkVirusTotal(url) {
 async function fetchAnalysis(analysisId, headers) {
   const resultResponse = await fetch(
     `${BASE_URL}/analyses/${analysisId}`,
-    { method: 'GET', headers }
+    { method: 'GET', headers, signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS) }
   )
 
   if (!resultResponse.ok) {

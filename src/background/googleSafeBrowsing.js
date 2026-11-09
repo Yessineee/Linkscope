@@ -2,6 +2,8 @@
 
 const ENDPOINT = 'https://safebrowsing.googleapis.com/v4/threatMatches:find'
 
+const REQUEST_TIMEOUT_MS = 10_000
+
 
 const THREAT_TYPES = [
   'MALWARE',
@@ -20,6 +22,7 @@ export async function checkGoogleSafeBrowsing(url) {
     }
     const response = await fetch(`${ENDPOINT}?key=${encodeURIComponent(API_KEY)}`, {
       method: 'POST',
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         client: {
@@ -47,7 +50,7 @@ export async function checkGoogleSafeBrowsing(url) {
     return { isThreat, threatType, error: false }
 
   } catch (err) {
-    console.error('GSB fetch failed:', err)
+    console.error(err.name === 'TimeoutError' ? 'GSB request timed out' : 'GSB fetch failed:', err)
     return { isThreat: false, threatType: null, error: true }
   }
 }

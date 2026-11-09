@@ -2,6 +2,8 @@
 
 const ENDPOINT = 'https://www.ipqualityscore.com/api/json/url'
 
+const REQUEST_TIMEOUT_MS = 10_000
+
 export async function checkIPQualityScore(url) {
   try {
     const { apiKeys = {} } = await chrome.storage.local.get('apiKeys')
@@ -14,7 +16,7 @@ export async function checkIPQualityScore(url) {
 
     const response = await fetch(
       `${ENDPOINT}/${encodeURIComponent(API_KEY)}/${encodedURL}?strictness=1&allow_public_access_points=true`,
-      { method: 'GET' }
+       { method: 'GET', signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS) }
     )
 
     if (!response.ok) {
@@ -45,7 +47,7 @@ export async function checkIPQualityScore(url) {
     }
 
   } catch (err) {
-    console.error('IPQS fetch failed:', err)
+    console.error(err.name === 'TimeoutError' ? 'IPQS request timed out' : 'IPQS fetch failed:', err)
     return { isThreat: false, fraudScore: 0, isPhishing: false, isMalware: false, domainAge: null, error: true }
   }
 }
