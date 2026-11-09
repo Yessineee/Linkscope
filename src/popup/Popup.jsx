@@ -262,13 +262,13 @@ function DisabledState() {
   )
 }
 
-function WhitelistedState({ onRemove }) {
+function WhitelistedState({ pageScoped, onRemove }) {
   return (
     <div className="flex flex-col items-center justify-center gap-3" style={{ minHeight: 300, padding: '0 24px' }}>
       <ShieldCheck size={40} color="#10b981" />
       <p style={{ color: '#f8fafc', fontSize: 14, fontWeight: 500 }}>Whitelisted</p>
       <p style={{ color: '#94a3b8', fontSize: 12, textAlign: 'center' }}>
-        Linkscope doesn't scan visits to this site, and nothing about them is sent to any service.
+        Linkscope doesn't scan visits to this {pageScoped ? 'page' : 'site'}, and nothing about them is sent to any service.
       </p>
       <button
         onClick={onRemove}
@@ -353,7 +353,7 @@ function PendingNote({ result }) {
   )
 }
 
-function ResultView({ result, scanning, onRescan, onWhitelist }) {
+function ResultView({ result, scanning, pageScoped, onRescan, onWhitelist }) {
   const riskLabel = result.riskLevel?.label ?? 'SAFE'
   const risk = RISK_COLORS[riskLabel] ?? RISK_COLORS.SAFE
   const RiskIcon = risk.icon
@@ -419,7 +419,7 @@ function ResultView({ result, scanning, onRescan, onWhitelist }) {
         </button>
         <button onClick={onWhitelist} style={buttonStyle}>
           <ShieldCheck size={14} />
-          Whitelist
+            {pageScoped ? 'Whitelist page' : 'Whitelist'}
         </button>
       </div>
     </div>
@@ -550,6 +550,9 @@ export default function Popup() {
   const notScannable = !tab?.url || shouldSkipURL(tab.url)
   const tabLoading = tab?.status === 'loading'
 
+  const whitelistKey = notScannable ? null : getCacheKey(tab.url)
+  const pageScoped = Boolean(whitelistKey && whitelistKey.includes('/'))
+
   let body
   let showFooter = true
 
@@ -561,7 +564,7 @@ export default function Popup() {
   } else if (notScannable) {
     body = <NoDataState title="This page isn't scanned" message="Linkscope only checks regular web pages (http and https)." />
   } else if (whitelisted) {
-    body = <WhitelistedState onRemove={handleRemoveFromWhitelist} />
+    body = <WhitelistedState pageScoped={pageScoped} onRemove={handleRemoveFromWhitelist} />
   } else if (state === 'analyzing' || (!state && !result && tabLoading)) {
     body = <LoadingState />
     showFooter = false
@@ -570,7 +573,7 @@ export default function Popup() {
   } else if (state === 'skipped') {
     body = <NoDataState title="Not scanned" message="Private and local addresses aren't scanned." />
   } else if (result) {
-    body = <ResultView result={result} scanning={scanning} onRescan={handleRescan} onWhitelist={handleWhitelist} />
+    body = <ResultView result={result} scanning={scanning} pageScoped={pageScoped} onRescan={handleRescan} onWhitelist={handleWhitelist} />
   } else {
     body = <NoDataState />
   }

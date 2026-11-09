@@ -26,7 +26,7 @@ hosting platform.
 | Fully non-Latin lookalike of a brand name | none yet | Open (needs a Unicode confusables table) |
 | Form field named `action` crashes the content script and skips analysis | manual test page | Fixed in code, manual test pending |
 | API outage cached as "safe" for 24 hours | manual test | Fixed (shown as "could not verify", re-checked after 5 minutes) |
-| Cache and whitelist keyed by hostname, so one verdict covers every path on a shared host | none yet | Open |
+| Cache and whitelist keyed by hostname, so one verdict covers every page on a multi-tenant host (Google Forms, Sites) | tests: cache key | Fixed for a curated list of hosts; other hosts still    share one verdict per hostname |
 | Redirect-chain tracking likely sees too few hops | none yet | Open |
 | Verdict can arrive late (VirusTotal polling takes up to ~30 s) | service worker log; manual test with a simulated VirusTotal result | Fixed (progressive verdict) |
 | A slow or hanging data source holds up the fast verdict | none yet | Open (request timeouts planned) |
@@ -75,6 +75,8 @@ Concern: browsing data reaching parties the user didn't intend.
 - IPQualityScore's risk score for the same URL can change between lookups, and the
   scorer adds its points only above 75, so sites near that threshold can flip
   between Safe and Suspicious. Weights will be calibrated against measured data.
+- The list of multi-tenant hosts is curated by hand and incomplete. A multi-tenant
+  host that isn't on it shares one cached verdict, and one whitelist entry, per hostname.
 
 ## Out of scope
 

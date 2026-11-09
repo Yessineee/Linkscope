@@ -54,6 +54,7 @@ export function parseUrl(raw) {
 
   return {
     hostname,
+    pathname: url.pathname,
     registrableDomain: parts.domain,
     domainLabel: parts.domainWithoutSuffix,
     publicSuffix: parts.publicSuffix,

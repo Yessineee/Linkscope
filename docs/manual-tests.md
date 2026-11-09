@@ -7,3 +7,4 @@
 | Page without a content script | Open a public PDF | Popup shows a verdict | no |
 | Overlay on a slow page | Throttle to Slow 3G, open `https://paypal.github.io/` | Overlay appears once the page loads | no |
 | Notification path | Set thresholds to 10, 20, 40, then run the VirusTotal stub test | Dangerous result, one notification, one overlay | no |
+| Per-page whitelist | On a Google Form or Sites page, whitelist it from the popup, reload it, then open another form | First page shows "Whitelisted", second is still scanned | no |

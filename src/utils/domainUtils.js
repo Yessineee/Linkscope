@@ -1,15 +1,7 @@
-import { parseUrl, registrableDomainOf } from '../core/url.js'
+import { registrableDomainOf } from '../core/url.js'
 
 export function extractDomainFromHostname(hostname) {
   return registrableDomainOf(hostname)
-}
-
-export function extractHostname(url) {
-  return parseUrl(url)?.hostname ?? null
-}
-
-export function stripWWW(hostname) {
-  return hostname.startsWith('www.') ? hostname.slice(4) : hostname
 }
 
 export function isHTTPS(url) {

@@ -95,3 +95,22 @@ export const KNOWN_REDIRECT_SERVICES = new Set([
   't.co', 'bit.ly', 'tinyurl.com', 'goo.gl', 'ow.ly',
   'buff.ly', 'is.gd', 'rebrand.ly', 'lnkd.in', 'youtu.be',
 ])
+
+
+// Hosts where each path belongs to a different owner (forms, sites, shared files, channels).
+// An entry is either a whole host ("sites.google.com") or one part of a host ("docs.google.com/forms").
+// Written from memory: verify each entry before relying on the list.
+export const MULTI_TENANT_PATHS = [
+  'docs.google.com/forms',
+  'sites.google.com',
+  'forms.gle',
+  'storage.googleapis.com',
+  'firebasestorage.googleapis.com',
+  'onedrive.live.com',
+  '1drv.ms',
+  'dropbox.com/s',
+  'dropbox.com/scl',
+  'notion.so',
+  'linktr.ee',
+  't.me',
+]

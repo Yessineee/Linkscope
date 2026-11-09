@@ -42,3 +42,7 @@ test('multi-part public suffix is handled', () => {
   assert.equal(r.registrableDomain, 'bank.com.ng')
   assert.equal(r.domainLabel, 'bank')
 })
+
+test('the path is exposed for callers that need it', () => {
+  assert.equal(parseUrl('https://a.com/x/y?z=1').pathname, '/x/y')
+})
