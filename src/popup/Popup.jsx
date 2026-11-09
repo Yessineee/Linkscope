@@ -318,15 +318,21 @@ function ErrorState({ onRescan, scanning }) {
 const STALLED_AFTER_MS = 60_000
 
 function PendingNote({ result }) {
-  const [, setTick] = useState(0)
+  // Time lives in state and is refreshed by a timer, so rendering never calls Date.now().
+  const [now, setNow] = useState(result.timestamp ?? 0)
 
   useEffect(() => {
-    const id = setInterval(() => setTick(t => t + 1), 5000)
-    return () => clearInterval(id)
+    const tick = () => setNow(Date.now())
+    const first = setTimeout(tick, 0)
+    const id = setInterval(tick, 5000)
+    return () => {
+      clearTimeout(first)
+      clearInterval(id)
+    }
   }, [])
 
   const names = result.pending.join(', ')
-  const stalled = Date.now() - (result.timestamp ?? 0) > STALLED_AFTER_MS
+  const stalled = now - (result.timestamp ?? 0) > STALLED_AFTER_MS
 
   if (stalled) {
     return (

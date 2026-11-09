@@ -10,10 +10,8 @@ import { getCacheKey, shouldSkipURL, isPrivateURL } from '../utils/urlUtils.js'
 import { parseUrl } from '../core/url.js'
 import { ALLOWED_DOMAINS } from '../core/brands.js'
 
-
 const apiResultsCache = new Map()
-
-// One entry per site being analyzed right now: { fast, finalRaw }.
+// One entry per site being analyzed right now: { fast, finalRaw, settledRaw }.
 const inFlight = new Map()
 
 const MAX_CACHED_DOMAINS = 200
@@ -85,6 +83,7 @@ async function runFastPhase(url, cacheKey, entry) {
   const cached = await readCache(cacheKey)
   if (cached) {
     console.log('Cache hit:', cacheKey)
+    entry.settledRaw = cached
     entry.finalRaw = Promise.resolve(cached)
     return cached
   }
@@ -97,9 +96,13 @@ async function runFastPhase(url, cacheKey, entry) {
     checkIPQualityScore(url),
   ])
 
-  const gsbResult = gsbSettled.status === 'fulfilled' ? gsbSettled.value : { isThreat: false, threatType: null, error: true }
+  const gsbResult = gsbSettled.status === 'fulfilled'
+    ? gsbSettled.value
+    : { isThreat: false, threatType: null, error: true }
 
-  const ipqsResult = ipqsSettled.status === 'fulfilled' ? ipqsSettled.value : { isThreat: false, fraudScore: 0, isPhishing: false, isMalware: false, domainAge: null, error: true }
+  const ipqsResult = ipqsSettled.status === 'fulfilled'
+    ? ipqsSettled.value
+    : { isThreat: false, fraudScore: 0, isPhishing: false, isMalware: false, domainAge: null, error: true }
 
   const preliminary = calculateRiskScore(domainResult, gsbResult, ipqsResult, null, {}, DEFAULT_THRESHOLDS)
   const dataFetchedAt = Date.now()
@@ -107,6 +110,7 @@ async function runFastPhase(url, cacheKey, entry) {
   if (!shouldQueryVirusTotal(preliminary.score, isBareBrandHost(url))) {
     console.log('Skipping VT for', cacheKey)
     const raw = { gsbResult, ipqsResult, vtResult: null, vtState: 'skipped', dataFetchedAt }
+    entry.settledRaw = raw
     entry.finalRaw = commit(cacheKey, entry, raw).then(() => raw)
     return raw
   }
@@ -117,13 +121,14 @@ async function runFastPhase(url, cacheKey, entry) {
     .catch(() => ({ isThreat: false, detectionCount: 0, engineCount: 0, error: true }))
     .then(vtResult => {
       const raw = { ...fastRaw, vtResult, vtState: 'done' }
+      entry.settledRaw = raw
       return commit(cacheKey, entry, raw).then(() => raw)
     })
   return fastRaw
 }
 
 function startAnalysis(url, cacheKey) {
-  const entry = { fast: null, finalRaw: null }
+  const entry = { fast: null, finalRaw: null, settledRaw: null }
   entry.fast = runFastPhase(url, cacheKey, entry)
   entry.fast
     .then(() => entry.finalRaw)
@@ -134,20 +139,17 @@ function startAnalysis(url, cacheKey) {
   return entry
 }
 
-// Returns null when the URL is skipped or whitelisted. Otherwise { result, final }:
-// `result` is ready after the fast sources; `final` is null when nothing is pending,
-// or a promise for the complete result once VirusTotal has finished.
-export async function analyzeURL(url, contentResult = {}, { ignoreWhitelist = false } = {}) {
+// Gathers the raw data for a URL (from cache, or from the sources) without scoring it.
+// Returns null when the URL is skipped or whitelisted. Otherwise { raw, final }:
+// `raw` is ready after the fast sources; `final` is null when nothing is pending,
+// or a promise for the complete raw data once VirusTotal has finished.
+export async function collectRaw(url, { ignoreWhitelist = false } = {}) {
   if (shouldSkipURL(url) || isPrivateURL(url)) return null
 
   const cacheKey = getCacheKey(url)
 
-  // Settings are read BEFORE anything is sent anywhere, so a whitelisted site never reaches the APIs.
-  const [{ whitelist = [] }, { riskThresholds }] = await Promise.all([
-    chrome.storage.local.get('whitelist'),
-    chrome.storage.local.get('riskThresholds'),
-  ])
-
+  // The whitelist is read BEFORE anything is sent anywhere, so a whitelisted site never reaches the APIs.
+  const { whitelist = [] } = await chrome.storage.local.get('whitelist')
   if (!ignoreWhitelist && whitelist.includes(cacheKey)) {
     console.log('Whitelisted:', cacheKey)
     return null
@@ -160,21 +162,23 @@ export async function analyzeURL(url, contentResult = {}, { ignoreWhitelist = fa
     inFlight.set(cacheKey, entry)
   }
 
-  const raw = await entry.fast
+  const fastRaw = await entry.fast
+  if (entry.settledRaw) return { raw: entry.settledRaw, final: null }
+  return { raw: fastRaw, final: entry.finalRaw }
+}
+
+// Scored version of collectRaw, used by the right-click link check.
+export async function analyzeURL(url, contentResult = {}, options = {}) {
+  const collected = await collectRaw(url, options)
+  if (!collected) return null
+
+  const { riskThresholds } = await chrome.storage.local.get('riskThresholds')
   const thresholds = riskThresholds ?? DEFAULT_THRESHOLDS
   const domainResult = analyzeDomain(url)
+  const build = raw => buildResult({ domainResult, raw, contentResult, thresholds })
 
-  const result = buildResult({ domainResult, raw, contentResult, thresholds })
-  const stage = result.pending.length > 0 ? 'fast result' : 'complete'
-  console.log(`Analysis ${stage}: ${url} → score ${result.score} (${result.riskLevel.label})`)
-
-  if (result.pending.length === 0) return { result, final: null }
-
-  const final = entry.finalRaw.then(finalRaw => {
-    const finalResult = buildResult({ domainResult, raw: finalRaw, contentResult, thresholds })
-    console.log(`Analysis complete: ${url} → score ${finalResult.score} (${finalResult.riskLevel.label})`)
-    return finalResult
-  })
+  const result = build(collected.raw)
+  const final = collected.final ? collected.final.then(build) : null
   return { result, final }
 }
 

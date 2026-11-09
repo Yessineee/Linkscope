@@ -30,8 +30,8 @@ hosting platform.
 | Redirect-chain tracking likely sees too few hops | none yet | Open |
 | Verdict can arrive late (VirusTotal polling takes up to ~30 s) | service worker log; manual test with a simulated VirusTotal result | Fixed (progressive verdict) |
 | A slow or hanging data source holds up the fast verdict | none yet | Open (request timeouts planned) |
-| Analysis depends on the content script running | none yet | Open (navigation-triggered analysis planned) |
-| Single-page-app navigations are not rescanned | none yet | Open |
+| Analysis depends on the content script running | none yet | Fixed in code (analysis starts at navigation commit; page signals are added when the content script reports); manual test pending |
+| Single-page-app navigations are not rescanned | none yet | Fixed (10 s request timeouts) |
 
 ## 2. Malicious page
 
@@ -53,9 +53,9 @@ Concern: browsing data reaching parties the user didn't intend.
 | Issue | Status |
 |---|---|
 | Full URLs, including paths and query strings, are sent to Google Safe Browsing, IPQualityScore, and VirusTotal | Open |
-| The dashboard and exported reports request favicons from Google, so visited domains reach Google | Open |
+| The dashboard and exported reports request favicons from Google, so visited domains reach Google | Fixed (local favicon cache; reports contain no favicons) |
 | Whitelisted sites were still sent to the APIs | Fixed |
-| "Clear History" leaves the API cache and link checks in place | Open |
+| "Clear History" leaves the API cache and link checks in place | Fixed ("Delete all scan data" clears history, link checks, caches and per-tab results) |
 | API keys in extension storage are readable from content scripts | Open |
 | The dashboard page can be framed by any website | Fixed |
 
@@ -68,6 +68,13 @@ Concern: browsing data reaching parties the user didn't intend.
   user, never a shared one.
 - VirusTotal lookups send the full URL, including path and query string (see the
   privacy table above).
+- Pages where the content script doesn't run (for example the PDF viewer) get a
+  popup verdict and a notification for dangerous results, but no in-page warning.
+- If the content script reports later than a few seconds after load, the verdict
+  is raised but the history entry keeps the earlier score.
+- IPQualityScore's risk score for the same URL can change between lookups, and the
+  scorer adds its points only above 75, so sites near that threshold can flip
+  between Safe and Suspicious. Weights will be calibrated against measured data.
 
 ## Out of scope
 

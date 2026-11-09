@@ -10,7 +10,8 @@
     "webNavigation",
     "activeTab",
     "contextMenus",
-    "webRequest"
+    "webRequest",
+    "favicon"
   ],
   "host_permissions": [
     "<all_urls>"

@@ -55,3 +55,22 @@ export function buildResult({ domainResult, raw, contentResult = {}, thresholds 
 
   return result
 }
+
+
+export function buildContentResult({ page, redirect, headers, isHttps }) {
+  const p = page ?? {}
+  const r = redirect ?? {}
+  const h = headers ?? {}
+  return {
+    hasSuspiciousForm: p.hasSuspiciousForm === true,
+    hasUrgencyLanguage: p.hasUrgencyLanguage === true,
+    isHTTPS: isHttps,
+    hasRedirectChain: r.hasRedirectChain === true,
+    redirectCount: r.redirectCount,
+    redirectChain: r.redirectChain,
+    hasCSP: h.hasCSP,
+    hasHSTS: h.hasHSTS,
+    hasXFrameOptions: h.hasXFrameOptions,
+    hasXContentTypeOptions: h.hasXContentTypeOptions,
+  }
+}

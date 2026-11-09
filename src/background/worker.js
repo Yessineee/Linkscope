@@ -1,17 +1,25 @@
 /* global chrome */
 
-import { analyzeURL, clearCacheForURL, clearAllApiCache } from './urlAnalyzer.js'
+import { collectRaw, analyzeURL, clearCacheForURL, clearAllApiCache } from './urlAnalyzer.js'
 import { shouldSkipURL, normalizeURL, getCacheKey, isPrivateURL } from '../utils/urlUtils.js'
-import { TOP_GLOBAL_DOMAINS, KNOWN_REDIRECT_SERVICES } from './domainAnalyzer.js'
+import { analyzeDomain } from './domainAnalyzer.js'
+import { TOP_GLOBAL_DOMAINS, KNOWN_REDIRECT_SERVICES } from '../core/brands.js'
 import { extractDomainFromHostname, isHTTPS } from '../utils/domainUtils.js'
-import { hasEscalated } from './verdict.js'
+import { buildResult, buildContentResult, hasEscalated } from './verdict.js'
+import { DEFAULT_THRESHOLDS } from './riskScorer.js'
 
 
 const redirectChains = new Map()
 const redirectResults = new Map()
 
-// The most recent analysis run per tab, so a superseded run (reload, rescan) can't publish stale results.
-const latestRun = new Map()
+// One entry per tab: the analysis of the page currently loaded there.
+const pageSessions = new Map()
+
+// Bumped by "Delete all scan data"; work started before a delete must not write results afterward.
+let dataEpoch = 0
+
+const SETTLE_DELAY_MS = 400   // pages that redirect away immediately aren't worth scanning
+const CONTENT_GRACE_MS = 3000 // how long after load to wait for the content script
 
 async function tabIsStillOn(tabId, url) {
   try {
@@ -22,8 +30,7 @@ async function tabIsStillOn(tabId, url) {
   }
 }
 
-async function setTabStatus(tabId, url, state) {
-  if (!(await tabIsStillOn(tabId, url))) return
+async function writeStatus(tabId, url, state) {
   await chrome.storage.local.set({
     [`status_${tabId}`]: { url, state, timestamp: Date.now() },
   })
@@ -97,7 +104,7 @@ chrome.contextMenus.onClicked.addListener(async (info) => {
   const linkUrl = info.linkUrl
   if (!linkUrl || shouldSkipURL(linkUrl)) return
 
-  
+  const epoch = dataEpoch
   const analysis = await analyzeURL(linkUrl, {}, { ignoreWhitelist: true })
   if (!analysis) {
     chrome.notifications.create({
@@ -110,6 +117,8 @@ chrome.contextMenus.onClicked.addListener(async (info) => {
   }
 
   const result = analysis.final ? await analysis.final : analysis.result
+
+  if (epoch !== dataEpoch) return
 
   const id = await saveLinkCheck(linkUrl, result)
 
@@ -149,8 +158,9 @@ chrome.webNavigation.onBeforeNavigate.addListener((details) => {
   const tabId = details.tabId
 
   redirectChains.set(tabId, [details.url])
+  redirectResults.delete(tabId)
+  securityHeadersResults.delete(tabId)
   chrome.storage.local.remove([`result_${tabId}`, `status_${tabId}`])
-  
 })
 
 chrome.webNavigation.onCommitted.addListener((details) => {
@@ -163,6 +173,15 @@ chrome.webNavigation.onCommitted.addListener((details) => {
     }
     redirectChains.get(tabId).push(details.url)
   }
+})
+
+chrome.webNavigation.onCommitted.addListener((details) => {
+  if (details.frameId !== 0) return
+  if (shouldSkipURL(details.url)) {
+    pageSessions.delete(details.tabId)
+    return
+  }
+  startPageAnalysis(details.tabId, details.url)
 })
 
 chrome.webNavigation.onCompleted.addListener(async (details) => {
@@ -211,6 +230,16 @@ chrome.webNavigation.onCompleted.addListener(async (details) => {
   }
 
   redirectResults.set(tabId, redirectResult)
+
+    // If the content script hasn't reported a few seconds after load, stop waiting for it.
+  const session = pageSessions.get(tabId)
+  if (session && !session.contentDone) {
+    setTimeout(() => {
+      if (pageSessions.get(tabId) !== session || session.contentDone) return
+      session.contentDone = true
+      scheduleRefresh(tabId, session)
+    }, CONTENT_GRACE_MS)
+  }
 })
 
 
@@ -219,6 +248,7 @@ chrome.tabs.onRemoved.addListener((tabId) => {
   chrome.storage.local.remove([`result_${tabId}`, `status_${tabId}`])
   redirectResults.delete(tabId)
   securityHeadersResults.delete(tabId)
+  pageSessions.delete(tabId)
 })
 
 chrome.runtime.onInstalled.addListener(async (details) => {
@@ -279,15 +309,183 @@ function attachHeaders(result, content) {
   result.hasXContentTypeOptions = content.hasXContentTypeOptions
 }
 
-async function publishToTab(tabId, url, result, showWarning) {
-  if (!(await tabIsStillOn(tabId, url))) return
-  await chrome.storage.local.set({
-    [`result_${tabId}`]: { url, ...result, timestamp: Date.now() },
-  })
-  await setTabStatus(tabId, url, 'done')
-  if (showWarning && result.riskLevel.label !== 'SAFE') {
-    chrome.tabs.sendMessage(tabId, { type: 'ANALYSIS_RESULT', url, result }).catch(() => {})
+const sleep = ms => new Promise(resolve => setTimeout(resolve, ms))
+
+function isCurrent(tabId, session) {
+  return pageSessions.get(tabId) === session
+}
+
+function newSession(url) {
+  return {
+    url,
+    headers: {},
+    redirect: {},
+    page: {},
+    raw: null,
+    contentDone: false,
+    epoch: dataEpoch,
+    settled: false,
+    notified: false,
+    shownLevel: null,
+    queue: Promise.resolve(),
   }
+}
+
+async function getThresholds() {
+  const { riskThresholds } = await chrome.storage.local.get('riskThresholds')
+  return riskThresholds ?? DEFAULT_THRESHOLDS
+}
+
+function evaluate(session, thresholds) {
+  const content = buildContentResult({
+    page: session.page,
+    redirect: session.redirect,
+    headers: session.headers,
+    isHttps: isHTTPS(session.url),
+  })
+  const result = buildResult({
+    domainResult: analyzeDomain(session.url),
+    raw: session.raw,
+    contentResult: content,
+    thresholds,
+  })
+  attachHeaders(result, content)
+  return result
+}
+
+async function publish(tabId, session, result) {
+  if (!isCurrent(tabId, session) || !(await tabIsStillOn(tabId, session.url))) return
+
+  await chrome.storage.local.set({
+    [`result_${tabId}`]: { url: session.url, ...result, timestamp: Date.now() },
+  })
+  await writeStatus(tabId, session.url, 'done')
+
+  // Warn when the level is higher than the last warning the page actually confirmed.
+  const label = result.riskLevel.label
+  if (hasEscalated(session.shownLevel ?? 'SAFE', label)) {
+    chrome.tabs.sendMessage(tabId, { type: 'ANALYSIS_RESULT', url: session.url, result })
+      .then(response => {
+        if (response?.received !== true) return
+        if (!session.shownLevel || hasEscalated(session.shownLevel, label)) session.shownLevel = label
+      })
+      .catch(() => {}) // the content script isn't running (yet); the next refresh tries again
+  }
+
+  if (label === 'DANGEROUS' && !session.notified) {
+    session.notified = true
+    await notifyDangerous(session.url, result)
+  }
+}
+
+// History is written once per page: when the verdict is final and the page signals are in.
+async function maybeSettle(session, result) {
+  if (session.settled || session.epoch !== dataEpoch || !session.contentDone || result.pending.length > 0) return
+  session.settled = true
+  await saveToHistory(session.url, result)
+}
+
+async function refresh(tabId, session) {
+  if (!session.raw || session.epoch !== dataEpoch) return
+
+  if (!(await isEnabled())) {
+    if (isCurrent(tabId, session)) {
+      await chrome.storage.local.remove([`result_${tabId}`, `status_${tabId}`])
+    }
+    return
+  }
+
+  const result = evaluate(session, await getThresholds())
+  const stage = result.pending.length > 0 ? 'fast result' : 'complete'
+  console.log(`Analysis ${stage}: ${session.url} → score ${result.score} (${result.riskLevel.label})`)
+
+  await publish(tabId, session, result)
+  await maybeSettle(session, result)
+}
+
+// Refreshes for one page run one at a time, so an older result can't overwrite a newer one.
+function scheduleRefresh(tabId, session) {
+  session.queue = session.queue
+    .then(() => refresh(tabId, session))
+    .catch(err => console.error('Linkscope refresh failed:', err))
+  return session.queue
+}
+
+async function runPageAnalysis(tabId, session) {
+  const { url } = session
+  if (!(await isEnabled())) return
+
+  await sleep(SETTLE_DELAY_MS)
+  if (!isCurrent(tabId, session)) return
+
+  const { whitelist = [] } = await chrome.storage.local.get('whitelist')
+  if (!isCurrent(tabId, session)) return
+
+  if (whitelist.includes(getCacheKey(url))) {
+    await writeStatus(tabId, url, 'whitelisted')
+    return
+  }
+  if (isPrivateURL(url)) {
+    await writeStatus(tabId, url, 'skipped')
+    return
+  }
+
+  await writeStatus(tabId, url, 'analyzing')
+
+  let collected
+  try {
+    collected = await collectRaw(url)
+  } catch (err) {
+    console.error('Linkscope analysis failed:', err)
+    if (isCurrent(tabId, session)) await writeStatus(tabId, url, 'error')
+    return
+  }
+
+  if (!collected) {
+    if (isCurrent(tabId, session)) await writeStatus(tabId, url, 'skipped')
+    return
+  }
+
+  // Phase 1: warn as soon as the fast sources have spoken.
+  session.raw = collected.raw
+  await scheduleRefresh(tabId, session)
+
+  if (!collected.final) return
+
+  // Phase 2: VirusTotal finished.
+  session.raw = await collected.final
+  await scheduleRefresh(tabId, session)
+}
+
+function startPageAnalysis(tabId, url) {
+  const session = newSession(url)
+  pageSessions.set(tabId, session)
+  session.headers = securityHeadersResults.get(tabId) ?? {}
+
+  runPageAnalysis(tabId, session).catch(err => console.error('Linkscope analysis failed:', err))
+  return session
+}
+
+// The content script reports page signals; they are merged into the page's session.
+async function handleContentAnalysis(message, sender) {
+  if (!(await isEnabled())) return
+
+  const tabId = sender.tab?.id
+  const url = sender.tab?.url
+  if (!tabId || !url || shouldSkipURL(url)) return
+
+  let session = pageSessions.get(tabId)
+  if (!session || normalizeURL(session.url) !== normalizeURL(url)) {
+    // No analysis was started for this page (for example, the worker restarted mid-load).
+    session = startPageAnalysis(tabId, url)
+  }
+
+  session.page = message.contentResult ?? {}
+  session.redirect = redirectResults.get(tabId) ?? {}
+  redirectResults.delete(tabId)
+  session.contentDone = true
+
+  if (session.raw) await scheduleRefresh(tabId, session)
 }
 
 async function notifyDangerous(url, result) {
@@ -301,103 +499,6 @@ async function notifyDangerous(url, result) {
     title: 'Dangerous Site Detected',
     message: `${host}: ${result.reasons[0] || 'This site has been flagged as dangerous.'}`,
   })
-}
-
-async function handleContentAnalysis(message, sender) {
-  if (!(await isEnabled())) return
-
-  const tabId = sender.tab?.id
-  const url = sender.tab?.url
-  if (!tabId || !url || shouldSkipURL(url)) return
-
-  const run = Symbol('analysis')
-  latestRun.set(tabId, run)
-  const superseded = () => latestRun.get(tabId) !== run
-
-  const redirectResult = redirectResults.get(tabId) ?? {}
-  redirectResults.delete(tabId)
-  const securityHeaders = securityHeadersResults.get(tabId) ?? {}
-  securityHeadersResults.delete(tabId)
-
-  const { whitelist = [] } = await chrome.storage.local.get('whitelist')
-  if (whitelist.includes(getCacheKey(url))) {
-    await setTabStatus(tabId, url, 'whitelisted')
-    return
-  }
-  if (isPrivateURL(url)) {
-    await setTabStatus(tabId, url, 'skipped')
-    return
-  }
-
-  await setTabStatus(tabId, url, 'analyzing')
-
-  // Anything from the page is untrusted: accept only strict booleans, and take HTTPS from the tab URL.
-  const page = message.contentResult ?? {}
-  const contentResult = {
-    hasSuspiciousForm: page.hasSuspiciousForm === true,
-    hasUrgencyLanguage: page.hasUrgencyLanguage === true,
-    isHTTPS: isHTTPS(url),
-    hasRedirectChain: redirectResult.hasRedirectChain === true,
-    redirectCount: redirectResult.redirectCount,
-    redirectChain: redirectResult.redirectChain,
-    hasCSP: securityHeaders.hasCSP,
-    hasHSTS: securityHeaders.hasHSTS,
-    hasXFrameOptions: securityHeaders.hasXFrameOptions,
-    hasXContentTypeOptions: securityHeaders.hasXContentTypeOptions,
-  }
-
-  let analysis
-  try {
-    analysis = await analyzeURL(url, contentResult)
-  } catch (err) {
-    console.error('Linkscope analysis failed:', err)
-    await setTabStatus(tabId, url, 'error')
-    return
-  }
-
-  if (!analysis) {
-    await setTabStatus(tabId, url, 'skipped')
-    return
-  }
-
-  const { result, final } = analysis
-  attachHeaders(result, contentResult)
-
-  if (!(await isEnabled())) {
-    await chrome.storage.local.remove([`result_${tabId}`, `status_${tabId}`])
-    return
-  }
-
-  // Phase 1: warn as soon as the fast sources have spoken.
-  if (!superseded()) {
-    await publishToTab(tabId, url, result, true)
-    if (result.riskLevel.label === 'DANGEROUS') await notifyDangerous(url, result)
-  }
-
-  if (!final) {
-    await saveToHistory(url, result)
-    return
-  }
-
-  // Phase 2: VirusTotal finished. History is written once, at the final verdict.
-  const finalResult = await final
-  attachHeaders(finalResult, contentResult)
-
-  if (!(await isEnabled())) {
-    await chrome.storage.local.remove([`result_${tabId}`, `status_${tabId}`])
-    return
-  }
-
-  await saveToHistory(url, finalResult)
-
-  if (superseded()) return
-
-  const escalated = hasEscalated(result.riskLevel.label, finalResult.riskLevel.label)
-  await publishToTab(tabId, url, finalResult, escalated)
-
-  if (result.riskLevel.label !== 'DANGEROUS' && finalResult.riskLevel.label === 'DANGEROUS') {
-    await notifyDangerous(url, finalResult)
-  }
 }
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
@@ -476,6 +577,21 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.type === 'CONTENT_ANALYSIS') {
     handleContentAnalysis(message, sender).catch(err => console.error('Linkscope analysis failed:', err))
     sendResponse({ received: true })
+    return true
+  }
+
+  if (message.type === 'DELETE_ALL_DATA') {
+    (async () => {
+      dataEpoch++
+      clearAllApiCache()
+      redirectChains.clear()
+      redirectResults.clear()
+      securityHeadersResults.clear()
+      const all = await chrome.storage.local.get(null)
+      const perTab = Object.keys(all).filter(k => k.startsWith('result_') || k.startsWith('status_'))
+      await chrome.storage.local.remove(['scanHistory', 'linkChecks', 'persistentApiCache', ...perTab])
+      sendResponse({ ok: true })
+    })()
     return true
   }
 

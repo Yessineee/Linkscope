@@ -15,8 +15,10 @@ const ICON_COMPONENTS = { shield: Shield, alertTriangle: AlertTriangle, shieldAl
 
 function getFaviconUrl(url) {
   try {
-    const domain = new URL(url).hostname
-    return `https://www.google.com/s2/favicons?domain=${domain}&sz=32`
+    const parsed = new URL(url)
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return null
+    // Only the origin is used, and the lookup is local: no request leaves the browser.
+    return `${chrome.runtime.getURL('/_favicon/')}?pageUrl=${encodeURIComponent(parsed.origin)}&size=32`
   } catch {
     return null
   }
@@ -145,7 +147,6 @@ function generatePrintableReport(entry) {
   ` : ''
 
   const cleanUrlForTitle = escapeHtmlForReport(entry.url.replace(/^https?:\/\//, '').replace(/\/$/, ''))
-  const faviconUrl = getFaviconUrl(entry.url)
 
   const printWindow = window.open('', '_blank')
   printWindow.document.write(`
@@ -252,7 +253,6 @@ function generatePrintableReport(entry) {
       <div class="section">
         <p class="section-label">Target URL</p>
         <div class="url-box">
-          ${faviconUrl ? `<img src="${faviconUrl}" width="16" height="16" style="border-radius:3px;flex-shrink:0;" />` : ''}
           <span>${escapeHtmlForReport(entry.url)}</span>
         </div>
       </div>
@@ -1641,8 +1641,72 @@ function CacheSettings() {
     )
   }
 
+function DeleteDataSettings({ setHistory, setLinkChecks }) {
+  const [confirming, setConfirming] = useState(false)
+  const [busy, setBusy] = useState(false)
+  const [done, setDone] = useState(false)
 
-function SettingsPage({ whitelist, setWhitelist }) {
+  useEffect(() => {
+    if (!confirming) return
+    const id = setTimeout(() => setConfirming(false), 6000)
+    return () => clearTimeout(id)
+  }, [confirming])
+
+  async function handleDelete() {
+    setBusy(true)
+    try {
+      await chrome.runtime.sendMessage({ type: 'DELETE_ALL_DATA' })
+      setHistory([])
+      setLinkChecks([])
+      setConfirming(false)
+      setDone(true)
+      setTimeout(() => setDone(false), 3000)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div style={{
+      background: '#1a1d2e',
+      border: '1px solid rgba(239,68,68,0.3)',
+      borderRadius: 12,
+      padding: 24,
+      marginBottom: 24,
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      gap: 16,
+    }}>
+      <div>
+        <h2 style={{ fontSize: 15, fontWeight: 600, color: '#f8fafc', marginBottom: 4 }}>
+          Delete all scan data
+        </h2>
+        <p style={{ fontSize: 12, color: '#94a3b8' }}>
+          Removes scan history, link checks and cached results. Your API keys, whitelist and settings are kept.
+        </p>
+      </div>
+      <button
+        onClick={confirming ? handleDelete : () => setConfirming(true)}
+        disabled={busy}
+        style={{
+          padding: '8px 14px',
+          background: confirming ? '#ef4444' : 'none',
+          border: '1px solid rgba(239,68,68,0.5)',
+          borderRadius: 8,
+          color: confirming ? '#f8fafc' : '#ef4444',
+          fontSize: 13,
+          cursor: 'pointer',
+          whiteSpace: 'nowrap',
+        }}
+      >
+        {done ? 'Deleted' : confirming ? 'Click again to confirm' : 'Delete all'}
+      </button>
+    </div>
+  )
+}
+
+function SettingsPage({ whitelist, setWhitelist, setHistory, setLinkChecks }) {
   const [apiKeys, setApiKeys] = useState({ gsb: '', ipqs: '', vt: '' })
   const [saved, setSaved] = useState(false)
   const [editing, setEditing] = useState({ gsb: false, ipqs: false, vt: false })
@@ -1861,6 +1925,7 @@ function SettingsPage({ whitelist, setWhitelist }) {
       <ThresholdSettings />
       <NotificationSettings />
       <CacheSettings />
+      <DeleteDataSettings setHistory={setHistory} setLinkChecks={setLinkChecks} />
 
       {/* Whitelist */}
       <div style={{
@@ -2233,7 +2298,7 @@ export default function Dashboard() {
       case 'linkchecks': return <LinkChecksPage linkChecks={linkChecks} setLinkChecks={setLinkChecks} setDetailEntry={setDetailEntry} setPage={setPage} />
       case 'detail': return <DetailPage entry={detailEntry} setPage={setPage} backTo="history" backLabel="Back to History" />
       case 'linkcheck-detail': return <DetailPage entry={detailEntry} setPage={setPage} backTo="linkchecks" backLabel="Back to Link Checks" />
-      case 'settings': return <SettingsPage whitelist={whitelist} setWhitelist={setWhitelist} />
+      case 'settings': return <SettingsPage whitelist={whitelist} setWhitelist={setWhitelist} setHistory={setHistory} setLinkChecks={setLinkChecks} />
       default: return null
     }
   }
