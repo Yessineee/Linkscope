@@ -15,6 +15,8 @@ function sameDocument(a, b) {
   }
 }
 
+let rescanTimer = null
+
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   
   if (message.type === 'ANALYSIS_RESULT') {
@@ -35,6 +37,13 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
   if (message.type === 'REMOVE_WARNING') {
     removeWarning()
+    sendResponse({ received: true })
+  }
+
+  if (message.type === 'PAGE_CHANGED') {
+    // A single-page app changed its address without reloading: report the new view once it has rendered.
+    clearTimeout(rescanTimer)
+    rescanTimer = setTimeout(sendContentResults, 800)
     sendResponse({ received: true })
   }
 

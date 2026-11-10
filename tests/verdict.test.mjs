@@ -47,11 +47,31 @@ test('complete results are cached for 24 hours, incomplete ones for 5 minutes', 
   assert.equal(ttlFor(raw({ vtState: 'skipped', gsbResult: { ...gsbOk, error: true } })), INCOMPLETE_TTL_MS)
 })
 
-test('VirusTotal is skipped for dangerous previews and bare brand hosts', () => {
-  assert.equal(shouldQueryVirusTotal(0, false), true)
-  assert.equal(shouldQueryVirusTotal(70, false), true)
-  assert.equal(shouldQueryVirusTotal(71, false), false)
-  assert.equal(shouldQueryVirusTotal(0, true), false)
+test('VirusTotal is a second opinion: only when the fast sources already suspect something, or both failed', () => {
+  assert.equal(shouldQueryVirusTotal(0, 0), false)
+  assert.equal(shouldQueryVirusTotal(20, 0), false)
+  assert.equal(shouldQueryVirusTotal(21, 0), true)
+  assert.equal(shouldQueryVirusTotal(70, 0), true)
+  assert.equal(shouldQueryVirusTotal(71, 0), false)
+  assert.equal(shouldQueryVirusTotal(0, 1), false)
+  assert.equal(shouldQueryVirusTotal(0, 2), true)
+  assert.equal(shouldQueryVirusTotal(71, 2), false)
+})
+
+test('sources that were skipped on purpose are not failures', () => {
+  const skipped = {
+    gsbResult: { isThreat: false, threatType: null, error: false, skipped: true },
+    ipqsResult: { isThreat: false, fraudScore: 0, isPhishing: false, isMalware: false, domainAge: null, error: false, skipped: true },
+    vtResult: null, vtState: 'skipped', lookups: 'skipped', dataFetchedAt: 1,
+  }
+  assert.deepEqual(failedSourcesOf(skipped), [])
+  const r = buildResult({ domainResult: null, raw: skipped })
+  assert.equal(r.incomplete, false)
+  assert.equal(r.externalLookups, 'skipped')
+})
+
+test('results cached before this setting count as sent', () => {
+  assert.equal(buildResult({ domainResult: null, raw: raw() }).externalLookups, 'sent')
 })
 
 test('while VirusTotal runs, the result is built without it and says what is pending', () => {

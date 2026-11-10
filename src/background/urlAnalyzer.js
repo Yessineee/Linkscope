@@ -7,8 +7,7 @@ import { checkVirusTotal } from './virusTotal.js'
 import { calculateRiskScore, DEFAULT_THRESHOLDS } from './riskScorer.js'
 import { buildResult, ttlFor, shouldQueryVirusTotal } from './verdict.js'
 import { getCacheKey, shouldSkipURL, isPrivateURL } from '../utils/urlUtils.js'
-import { parseUrl } from '../core/url.js'
-import { ALLOWED_DOMAINS } from '../core/brands.js'
+import { lookupUrlFor } from '../core/lookupUrl.js'
 
 const apiResultsCache = new Map()
 // One entry per site being analyzed right now: { fast, finalRaw, settledRaw }.
@@ -63,15 +62,6 @@ async function readCache(cacheKey) {
   return getCachedApiResults(cacheKey)
 }
 
-function isBareBrandHost(url) {
-  const p = parseUrl(url)
-  if (!p || !p.registrableDomain) return false
-  return (
-    ALLOWED_DOMAINS.has(p.registrableDomain) &&
-    (p.hostname === p.registrableDomain || p.hostname === `www.${p.registrableDomain}`)
-  )
-}
-
 // Store a finished result, unless a rescan or cache clear has replaced this analysis in the meantime.
 function commit(cacheKey, entry, raw) {
   if (inFlight.get(cacheKey) !== entry) return Promise.resolve()
@@ -79,7 +69,33 @@ function commit(cacheKey, entry, raw) {
   return setCachedApiResults(cacheKey, raw).catch(err => console.warn('Could not persist API cache:', err))
 }
 
+// Raw data for a page where nothing was sent to any outside service.
+// 'off' = the local-only setting; 'skipped' = a page that is not worth (or not safe) to look up.
+function noLookupsRaw(lookups) {
+  return {
+    gsbResult: { isThreat: false, threatType: null, error: false, skipped: true },
+    ipqsResult: { isThreat: false, fraudScore: 0, isPhishing: false, isMalware: false, domainAge: null, error: false, skipped: true },
+    vtResult: null,
+    vtState: 'skipped',
+    lookups,
+    dataFetchedAt: Date.now(),
+  }
+}
+
 async function runFastPhase(url, cacheKey, entry) {
+  const { localOnly } = await chrome.storage.local.get('localOnly')
+  const plan = lookupUrlFor(url)
+
+  // These results are cheap to recompute and are deliberately not cached, so turning
+  // the setting off (or a rule changing) takes effect on the very next visit.
+  if (localOnly === true || !plan.send) {
+    console.log('No external lookups for', cacheKey, localOnly === true ? '(local only)' : `(${plan.reason})`)
+    const raw = noLookupsRaw(localOnly === true ? 'off' : 'skipped')
+    entry.settledRaw = raw
+    entry.finalRaw = Promise.resolve(raw)
+    return raw
+  }
+
   const cached = await readCache(cacheKey)
   if (cached) {
     console.log('Cache hit:', cacheKey)
@@ -88,12 +104,13 @@ async function runFastPhase(url, cacheKey, entry) {
     return cached
   }
 
-  console.log('Analyzing URL:', url)
+  console.log('Analyzing URL:', plan.url)
   const domainResult = analyzeDomain(url)
 
+  // Only the reduced address in `plan.url` ever leaves the browser.
   const [gsbSettled, ipqsSettled] = await Promise.allSettled([
-    checkGoogleSafeBrowsing(url),
-    checkIPQualityScore(url),
+    checkGoogleSafeBrowsing(plan.url),
+    checkIPQualityScore(plan.url),
   ])
 
   const gsbResult = gsbSettled.status === 'fulfilled'
@@ -105,9 +122,10 @@ async function runFastPhase(url, cacheKey, entry) {
     : { isThreat: false, fraudScore: 0, isPhishing: false, isMalware: false, domainAge: null, error: true }
 
   const preliminary = calculateRiskScore(domainResult, gsbResult, ipqsResult, null, {}, DEFAULT_THRESHOLDS)
+  const failedFast = (gsbResult.error ? 1 : 0) + (ipqsResult.error ? 1 : 0)
   const dataFetchedAt = Date.now()
 
-  if (!shouldQueryVirusTotal(preliminary.score, isBareBrandHost(url))) {
+  if (!shouldQueryVirusTotal(preliminary.score, failedFast)) {
     console.log('Skipping VT for', cacheKey)
     const raw = { gsbResult, ipqsResult, vtResult: null, vtState: 'skipped', dataFetchedAt }
     entry.settledRaw = raw
@@ -117,7 +135,7 @@ async function runFastPhase(url, cacheKey, entry) {
 
   // VirusTotal runs in the background; the fast result is returned right away.
   const fastRaw = { gsbResult, ipqsResult, vtResult: null, vtState: 'pending', dataFetchedAt }
-  entry.finalRaw = checkVirusTotal(url)
+  entry.finalRaw = checkVirusTotal(plan.url)
     .catch(() => ({ isThreat: false, detectionCount: 0, engineCount: 0, error: true }))
     .then(vtResult => {
       const raw = { ...fastRaw, vtResult, vtState: 'done' }

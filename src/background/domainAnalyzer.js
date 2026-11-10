@@ -1,5 +1,6 @@
 import { parseUrl } from '../core/url.js'
-import { BRANDS, ALLOWED_DOMAINS, TYPO_EXCLUDED, WORD_BRANDS, COUNTRY_VARIANT_BRANDS, COMMON_COUNTRY_CODES, SUSPICIOUS_WORDS } from '../core/brands.js'
+import { BRANDS, TYPO_EXCLUDED, WORD_BRANDS, SUSPICIOUS_WORDS } from '../core/brands.js'
+import { isBrandOwnedHost } from '../core/legitimacy.js'
 
 
 
@@ -47,15 +48,6 @@ const LONG_SUSPICIOUS = [...SUSPICIOUS_WORDS].filter(w => w.length >= 5)
 
 function maxTypoDistance(brand) {
   return brand.length >= 8 ? 2 : 1
-}
-
-function isLegitimate(p) {
-  if (ALLOWED_DOMAINS.has(p.registrableDomain)) return true
-  if (COUNTRY_VARIANT_BRANDS.has(p.domainLabel) && !p.onSharedHost) {
-    const countryCode = p.publicSuffix.split('.').pop()
-    return COMMON_COUNTRY_CODES.has(countryCode)
-  }
-  return false
 }
 
 function findBrandMisuse(p, label) {
@@ -116,7 +108,7 @@ export function analyzeDomain(url) {
   const label = p.domainLabelUnicode.toLowerCase()
   const hasMixedScript = hasMixedConfusableScripts(label)
 
-  if (isLegitimate(p)) return { ...neutral, distance: 0 }
+  if (isBrandOwnedHost(p)) return { ...neutral, distance: 0 }
 
   const hit = findBrandMisuse(p, label)
 

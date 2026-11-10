@@ -113,4 +113,14 @@ export const MULTI_TENANT_PATHS = [
   'notion.so',
   'linktr.ee',
   't.me',
+  'forms.office.com',
+  'forms.microsoft.com',
+  'sway.office.com',
 ]
+
+// Brand domains whose subdomains or paths host other people's pages. Unlike the brand's own
+// pages, these are still looked up. Written from memory: verify each entry.
+export const USER_CONTENT_DOMAINS = new Set([
+  'wordpress.com', 'medium.com', 'canva.com', 'wetransfer.com', 'figma.com',
+  'notion.so', 'trello.com', 'slack.com', 'zoom.us', 'dropbox.com',
+])

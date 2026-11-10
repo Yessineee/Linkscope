@@ -3,10 +3,19 @@
 import { collectRaw, analyzeURL, clearCacheForURL, clearAllApiCache } from './urlAnalyzer.js'
 import { shouldSkipURL, normalizeURL, getCacheKey, isPrivateURL } from '../utils/urlUtils.js'
 import { analyzeDomain } from './domainAnalyzer.js'
-import { TOP_GLOBAL_DOMAINS, KNOWN_REDIRECT_SERVICES } from '../core/brands.js'
-import { extractDomainFromHostname, isHTTPS } from '../utils/domainUtils.js'
+import { analyzeRedirectChain } from '../core/redirects.js'
+import { isHTTPS } from '../utils/domainUtils.js'
 import { buildResult, buildContentResult, hasEscalated } from './verdict.js'
 import { DEFAULT_THRESHOLDS } from './riskScorer.js'
+
+// Content scripts run inside web pages and never need storage: keep keys and history out of their reach.
+try {
+  chrome.storage.local
+    .setAccessLevel({ accessLevel: 'TRUSTED_CONTEXTS' })
+    .catch(err => console.warn('Could not restrict storage access:', err))
+} catch (err) {
+  console.warn('Could not restrict storage access:', err)
+}
 
 
 const redirectChains = new Map()
@@ -153,99 +162,88 @@ chrome.notifications.onClicked.addListener(async (notificationId) => {
   chrome.notifications.clear(notificationId)
 })
 
+// The address of each page the tab went through before this one, kept for script-driven redirects.
+const previousChains = new Map()
+const MAX_CHAIN_HOPS = 20
+
 chrome.webNavigation.onBeforeNavigate.addListener((details) => {
   if (details.frameId !== 0) return
   const tabId = details.tabId
 
+  previousChains.set(tabId, redirectChains.get(tabId) ?? [])
   redirectChains.set(tabId, [details.url])
   redirectResults.delete(tabId)
   securityHeadersResults.delete(tabId)
   chrome.storage.local.remove([`result_${tabId}`, `status_${tabId}`])
 })
 
-chrome.webNavigation.onCommitted.addListener((details) => {
-  if (details.frameId !== 0) return
-  if (details.transitionQualifiers?.includes('server_redirect') ||
-      details.transitionQualifiers?.includes('client_redirect')) {
-    const tabId = details.tabId
-    if (!redirectChains.has(tabId)) {
-      redirectChains.set(tabId, [])
-    }
-    redirectChains.get(tabId).push(details.url)
-  }
-})
+// Every server redirect of a top-level page load, in order.
+chrome.webRequest.onBeforeRedirect.addListener(
+  (details) => {
+    if (details.type !== 'main_frame' || details.tabId < 0) return
+    const chain = redirectChains.get(details.tabId) ?? [details.url]
+    chain.push(details.redirectUrl)
+    redirectChains.set(details.tabId, chain.slice(-MAX_CHAIN_HOPS))
+  },
+  { urls: ['<all_urls>'], types: ['main_frame'] }
+)
 
 chrome.webNavigation.onCommitted.addListener((details) => {
   if (details.frameId !== 0) return
-  if (shouldSkipURL(details.url)) {
-    pageSessions.delete(details.tabId)
-    return
-  }
-  startPageAnalysis(details.tabId, details.url)
-})
-
-chrome.webNavigation.onCompleted.addListener(async (details) => {
-  const { extensionEnabled } = await chrome.storage.local.get('extensionEnabled')
-  if (extensionEnabled === false) return
-  if (details.frameId !== 0) return
-
-  const url = details.url
-  if (shouldSkipURL(url)) return
-
   const tabId = details.tabId
 
-  const chain = redirectChains.get(tabId) ?? []
-  redirectChains.delete(tabId)
-
-
-  const validChain = chain.filter(u => {
-  try { 
-    const parsed = new URL(u)
-    return parsed.protocol === 'http:' || parsed.protocol === 'https:'
-  } catch { 
-    return false 
-  }
-})
-
-  const getBase = u => { try { return extractDomainFromHostname(new URL(u).hostname) } catch { return u } }
-
-  const untrustedChain = validChain.filter(u => {
-  try {
-    const hostname = new URL(u).hostname
-    if(KNOWN_REDIRECT_SERVICES.has(hostname)) return false
-    const parts = hostname.split('.')
-    const baseDomain =  parts.length >= 2 ? parts[parts.length - 2] : hostname
-    return !TOP_GLOBAL_DOMAINS.has(baseDomain)
-  } catch { return false }
-})
-
-  const uniqueDomains = new Set(untrustedChain.map(getBase))
-
-  const redirectResult = {
-    hasRedirectChain: untrustedChain.length > 2 && uniqueDomains.size > 1,
-    redirectCount: validChain.length,
-    redirectChain: validChain.map(u => {
-      try { return new URL(u).hostname } catch { return u }
-    }),
+  if (shouldSkipURL(details.url)) {
+    pageSessions.delete(tabId)
+    return
   }
 
-  redirectResults.set(tabId, redirectResult)
-
-    // If the content script hasn't reported a few seconds after load, stop waiting for it.
-  const session = pageSessions.get(tabId)
-  if (session && !session.contentDone) {
-    setTimeout(() => {
-      if (pageSessions.get(tabId) !== session || session.contentDone) return
-      session.contentDone = true
-      scheduleRefresh(tabId, session)
-    }, CONTENT_GRACE_MS)
+  // A script- or meta-refresh redirect starts a new navigation, so the chain so far is carried over.
+  let chain = redirectChains.get(tabId) ?? []
+  if (details.transitionQualifiers?.includes('client_redirect')) {
+    chain = [...(previousChains.get(tabId) ?? []), ...chain]
   }
+  chain = [...chain, details.url].slice(-MAX_CHAIN_HOPS)
+  redirectChains.set(tabId, chain)
+  redirectResults.set(tabId, analyzeRedirectChain(chain))
+
+  startPageAnalysis(tabId, details.url)
 })
 
+// If the content script hasn't reported shortly after a page is ready, stop waiting for it.
+function armContentGrace(tabId, session) {
+  setTimeout(() => {
+    if (pageSessions.get(tabId) !== session || session.contentDone) return
+    session.contentDone = true
+    scheduleRefresh(tabId, session)
+  }, CONTENT_GRACE_MS)
+}
+
+chrome.webNavigation.onCompleted.addListener((details) => {
+  if (details.frameId !== 0) return
+  const session = pageSessions.get(details.tabId)
+  if (session && !session.contentDone) armContentGrace(details.tabId, session)
+})
+
+// A single-page app changed its address without reloading: that is a new page to check.
+chrome.webNavigation.onHistoryStateUpdated.addListener((details) => {
+  if (details.frameId !== 0 || shouldSkipURL(details.url)) return
+  const tabId = details.tabId
+
+  const current = pageSessions.get(tabId)
+  if (current && normalizeURL(current.url) === normalizeURL(details.url)) return
+
+  chrome.storage.local.remove([`result_${tabId}`, `status_${tabId}`])
+  redirectResults.delete(tabId)
+  const session = startPageAnalysis(tabId, details.url)
+  armContentGrace(tabId, session)
+  chrome.tabs.sendMessage(tabId, { type: 'PAGE_CHANGED' }).catch(() => {})
+})
 
 
 chrome.tabs.onRemoved.addListener((tabId) => {
   chrome.storage.local.remove([`result_${tabId}`, `status_${tabId}`])
+  redirectChains.delete(tabId)
+  previousChains.delete(tabId)
   redirectResults.delete(tabId)
   securityHeadersResults.delete(tabId)
   pageSessions.delete(tabId)
@@ -461,6 +459,7 @@ function startPageAnalysis(tabId, url) {
   const session = newSession(url)
   pageSessions.set(tabId, session)
   session.headers = securityHeadersResults.get(tabId) ?? {}
+  session.redirect = redirectResults.get(tabId) ?? {}
 
   runPageAnalysis(tabId, session).catch(err => console.error('Linkscope analysis failed:', err))
   return session
@@ -481,8 +480,6 @@ async function handleContentAnalysis(message, sender) {
   }
 
   session.page = message.contentResult ?? {}
-  session.redirect = redirectResults.get(tabId) ?? {}
-  redirectResults.delete(tabId)
   session.contentDone = true
 
   if (session.raw) await scheduleRefresh(tabId, session)

@@ -27,11 +27,11 @@ hosting platform.
 | Form field named `action` crashes the content script and skips analysis | manual test page | Fixed in code, manual test pending |
 | API outage cached as "safe" for 24 hours | manual test | Fixed (shown as "could not verify", re-checked after 5 minutes) |
 | Cache and whitelist keyed by hostname, so one verdict covers every page on a multi-tenant host (Google Forms, Sites) | tests: cache key | Fixed for a curated list of hosts; other hosts still    share one verdict per hostname |
-| Redirect-chain tracking likely sees too few hops | none yet | Open |
+| Redirect-chain tracking likely sees too few hops | unit tests; manual test | Fixed in code (hops from webRequest redirects, script redirects carried over, trusted hops judged by registrable domain); manual test pending |
 | Verdict can arrive late (VirusTotal polling takes up to ~30 s) | service worker log; manual test with a simulated VirusTotal result | Fixed (progressive verdict) |
 | A slow or hanging data source holds up the fast verdict | none yet | Open (request timeouts planned) |
 | Analysis depends on the content script running | none yet | Fixed in code (analysis starts at navigation commit; page signals are added when the content script reports); manual test pending |
-| Single-page-app navigations are not rescanned | none yet | Fixed (10 s request timeouts) |
+| Single-page-app navigations are not rescanned | manual test | Fixed |
 
 ## 2. Malicious page
 
@@ -52,11 +52,11 @@ Concern: browsing data reaching parties the user didn't intend.
 
 | Issue | Status |
 |---|---|
-| Full URLs, including paths and query strings, are sent to Google Safe Browsing, IPQualityScore, and VirusTotal | Open |
+| URLs sent to Google Safe Browsing, IPQualityScore and VirusTotal | Partly fixed: query and fragment removed, ID-like path segments cut, first-party brand hosts and owner pages not sent,      VirusTotal only as a second opinion, optional local-only mode. The services still learn which sites are visited. |
 | The dashboard and exported reports request favicons from Google, so visited domains reach Google | Fixed (local favicon cache; reports contain no favicons) |
 | Whitelisted sites were still sent to the APIs | Fixed |
 | "Clear History" leaves the API cache and link checks in place | Fixed ("Delete all scan data" clears history, link checks, caches and per-tab results) |
-| API keys in extension storage are readable from content scripts | Open |
+| API keys in extension storage are readable from content scripts | manual test | Fixed (storage restricted to trusted contexts) |
 | The dashboard page can be framed by any website | Fixed |
 
 ## Known limitations
@@ -77,6 +77,15 @@ Concern: browsing data reaching parties the user didn't intend.
   between Safe and Suspicious. Weights will be calibrated against measured data.
 - The list of multi-tenant hosts is curated by hand and incomplete. A multi-tenant
   host that isn't on it shares one cached verdict, and one whitelist entry, per hostname.
+- Secret-looking path segments are detected by a heuristic, so some identifiers may still be sent.
+- First-party brand hosts are not looked up externally; abuse hosted on them is only caught
+  where the host appears on the multi-tenant or user-content lists, which are curated by hand.
+- VirusTotal is only queried when the other sources already suspect the page, so it can no
+  longer catch pages the others rate as clean.
+- The redirect-chain rule (more than two unrelated hops) is untuned and may flag ad or
+  affiliate click chains.
+- On a flagged single-page app, the warning is shown again on each route change, even after
+  the user chose to continue.
 
 ## Out of scope
 

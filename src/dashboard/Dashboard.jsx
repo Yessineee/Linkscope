@@ -1706,6 +1706,64 @@ function DeleteDataSettings({ setHistory, setLinkChecks }) {
   )
 }
 
+function PrivacySettings() {
+  const [localOnly, setLocalOnly] = useState(false)
+
+  useEffect(() => {
+    chrome.storage.local.get('localOnly').then(({ localOnly: stored }) => {
+      setLocalOnly(stored === true)
+    })
+  }, [])
+
+  async function handleToggle() {
+    const next = !localOnly
+    setLocalOnly(next)
+    await chrome.storage.local.set({ localOnly: next })
+  }
+
+  return (
+    <div style={{
+      background: '#1a1d2e',
+      border: '1px solid #2a2d3e',
+      borderRadius: 12,
+      padding: 24,
+      marginBottom: 24,
+    }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16 }}>
+        <div>
+          <h2 style={{ fontSize: 15, fontWeight: 600, color: '#f8fafc', marginBottom: 4 }}>
+            Local checks only
+          </h2>
+          <p style={{ fontSize: 12, color: '#94a3b8' }}>
+            Nothing about the pages you visit is sent to Google, IPQualityScore or VirusTotal.
+            Lookalike, form and redirect checks still run, but known-bad-site databases are not consulted.
+          </p>
+        </div>
+        <button
+          onClick={handleToggle}
+          style={{
+            width: 40, height: 22, borderRadius: 11, border: 'none',
+            background: localOnly ? '#f59e0b' : '#2a2d3e', cursor: 'pointer',
+            position: 'relative', transition: 'background 0.2s', flexShrink: 0,
+          }}
+        >
+          <span style={{
+            position: 'absolute', top: 3, left: localOnly ? 21 : 3,
+            width: 16, height: 16, borderRadius: '50%', background: '#f8fafc',
+            transition: 'left 0.2s',
+          }} />
+        </button>
+      </div>
+      <p style={{ fontSize: 11, color: '#94a3b8', marginTop: 14, lineHeight: 1.6 }}>
+        <strong style={{ color: '#f8fafc' }}>What is sent when this is off:</strong> only the address of the
+        page, without anything after "?" or "#", and with long ID-like parts of the path removed. Pages on large
+        first-party sites (Gmail, Amazon, Facebook and similar) are not sent. The services still learn that you
+        visited a site, and see your IP address.
+      </p>
+    </div>
+  )
+}
+
 function SettingsPage({ whitelist, setWhitelist, setHistory, setLinkChecks }) {
   const [apiKeys, setApiKeys] = useState({ gsb: '', ipqs: '', vt: '' })
   const [saved, setSaved] = useState(false)
@@ -1924,6 +1982,7 @@ function SettingsPage({ whitelist, setWhitelist, setHistory, setLinkChecks }) {
 
       <ThresholdSettings />
       <NotificationSettings />
+      <PrivacySettings />
       <CacheSettings />
       <DeleteDataSettings setHistory={setHistory} setLinkChecks={setLinkChecks} />
 

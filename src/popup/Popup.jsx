@@ -382,6 +382,11 @@ function ResultView({ result, scanning, pageScoped, onRescan, onWhitelist }) {
         <span style={{ color: risk.color, fontSize: 16, fontWeight: 600 }}>{risk.label}</span>
       </div>
       {result.pending?.length > 0 && <PendingNote result={result} />}
+      {result.externalLookups === 'off' && (
+        <p style={{ fontSize: 11, color: '#94a3b8', textAlign: 'center', marginBottom: 12 }}>
+          External lookups are off: local checks only
+        </p>
+      )}
       
       <p style={{
         fontSize: 11, color: '#94a3b8', textAlign: 'center', marginBottom: 16,
