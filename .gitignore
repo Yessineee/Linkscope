@@ -30,3 +30,4 @@ dist-ssr
 *.crx
 *.zip
 coverage/
+data/
