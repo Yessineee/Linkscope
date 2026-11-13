@@ -81,3 +81,19 @@ export function countBy(items, keyFn) {
 export function defang(url) {
   return String(url).replace(/^http/i, 'hxxp').replace(/\./g, '[.]')
 }
+
+export const RANK_BANDS = [[1, 1000], [1001, 10000], [10001, 50000], [50001, 100000], [100001, 1000000]]
+
+// Flag rate per popularity band: how many domains in each rank range were flagged.
+export function rateByBand(items, threshold, bands = RANK_BANDS) {
+  return bands.map(([from, to]) => {
+    const inBand = items.filter(item => item.rank >= from && item.rank <= to)
+    const flagged = inBand.filter(item => item.score > threshold).length
+    return {
+      band: `${from}-${to}`,
+      total: inBand.length,
+      flagged,
+      perThousand: inBand.length === 0 ? 0 : Number(((flagged / inBand.length) * 1000).toFixed(2)),
+    }
+  })
+}

@@ -1,9 +1,8 @@
 import { readFileSync, existsSync, writeFileSync } from 'node:fs'
 import { analyzeDomain } from '../../src/background/domainAnalyzer.js'
-import { calculateRiskScore } from '../../src/background/riskScorer.js'
+import { scoreUrl } from './score.mjs'
 import { parseUrl } from '../../src/core/url.js'
 import { isBrandOwnedHost } from '../../src/core/legitimacy.js'
-import { isHTTPS } from '../../src/utils/domainUtils.js'
 import { seededRandom, shuffled, sample, parseFeedUrls, parseTranco, capPerKey, flaggedRate, countBy, defang } from './lib.mjs'
 
 function option(name, fallback) {
@@ -20,17 +19,6 @@ const TAIL_FROM_RANK = 10000
 
 const dataFile = name => new URL(`../../data/${name}`, import.meta.url)
 const readData = name => (existsSync(dataFile(name)) ? readFileSync(dataFile(name), 'utf8') : null)
-
-function scoreUrl(url) {
-  const domain = analyzeDomain(url)
-  const result = calculateRiskScore(domain, null, null, null, { isHTTPS: isHTTPS(url) })
-  return {
-    score: result.score,
-    level: result.riskLevel.label,
-    signals: result.signals.map(signal => signal.id),
-    kind: domain.kind ?? 'none',
-  }
-}
 
 function hostKind(url) {
   const parsed = parseUrl(url)

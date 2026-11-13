@@ -8,7 +8,8 @@
     "build": "vite build",
     "lint": "eslint .",
     "preview": "vite preview",
-    "eval": "node scripts/eval/evaluate.mjs"
+    "eval": "node scripts/eval/evaluate.mjs",
+    "eval:bands": "node scripts/eval/bands.mjs"
   },
   "dependencies": {
     "lucide-react": "^1.18.0",

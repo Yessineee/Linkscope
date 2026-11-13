@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { seededRandom, shuffled, sample, parseFeedUrls, parseTranco, capPerKey, flaggedRate, countBy, defang } from '../scripts/eval/lib.mjs'
+import { seededRandom, shuffled, sample, parseFeedUrls, parseTranco, capPerKey, flaggedRate, countBy, defang, rateByBand } from '../scripts/eval/lib.mjs'
 
 test('the same seed always gives the same numbers, all in [0, 1)', () => {
   const a = seededRandom(42)
@@ -82,4 +82,27 @@ test('counting handles single keys and lists of keys, most common first', () => 
 test('defanging breaks the scheme and every dot', () => {
   assert.equal(defang('http://evil.example.com/login.php'), 'hxxp://evil[.]example[.]com/login[.]php')
   assert.equal(defang('https://x.example/'), 'hxxps://x[.]example/')
+})
+
+test('flag rates are computed per popularity band, with inclusive boundaries', () => {
+  const items = [
+    { rank: 1000, score: 40 },
+    { rank: 1000, score: 0 },
+    { rank: 1001, score: 0 },
+    { rank: 20000, score: 40 },
+  ]
+  const bands = [[1, 1000], [1001, 10000], [10001, 50000]]
+  assert.deepEqual(rateByBand(items, 20, bands), [
+    { band: '1-1000', total: 2, flagged: 1, perThousand: 500 },
+    { band: '1001-10000', total: 1, flagged: 0, perThousand: 0 },
+    { band: '10001-50000', total: 1, flagged: 1, perThousand: 1000 },
+  ])
+})
+
+test('a band with no items has a rate of 0, not NaN', () => {
+  assert.deepEqual(rateByBand([], 20, [[1, 10]]), [{ band: '1-10', total: 0, flagged: 0, perThousand: 0 }])
+})
+
+test('items outside every band are ignored', () => {
+  assert.equal(rateByBand([{ rank: 2000000, score: 99 }], 20, [[1, 10]])[0].total, 0)
 })
